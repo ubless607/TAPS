@@ -9,11 +9,11 @@ import os
 from interface import SimulatedRobot
 from robot import Robot
 
-MODEL_PATH = 'low_cost_robot/scene.xml'
+MODEL_PATH = os.path.dirname(__file__) + '/low_cost_robot/scene.xml'
 EE_SITE_NAME = 'joint6'
 
-GRIPPER_OPEN_PWM  = 2979     
-GRIPPER_CLOSE_PWM = 1901 
+GRIPPER_OPEN_PWM  = 2979
+GRIPPER_CLOSE_PWM = 1901
 
 # --- [설정 1] 오프셋 (User Settings) ---
 JOINT_OFFSETS = np.array([0.00, 0.25, -1.57, 0.00, 2.29, 0.00])
@@ -36,11 +36,11 @@ FLOOR_LIMIT = 0.07
 
 # --- [설정 5] 자동 탐색 설정 ---
 PINCER_CONFIG = {
-    'SWEEP_SPEED': 6,           
-    'COLLISION_THRESH': 60,    
-    'RIGHT_LIMIT_J0': 993,      
-    'LEFT_LIMIT_J0': 3000,      
-    'INITIAL_POSE': np.array([2048, 1623, 1171, 1289, 3000, 2130]) 
+    'SWEEP_SPEED': 6,
+    'COLLISION_THRESH': 60,
+    'RIGHT_LIMIT_J0': 993,
+    'LEFT_LIMIT_J0': 3000,
+    'INITIAL_POSE': np.array([2048, 1623, 1171, 1289, 3000, 2130])
 }
 
 # --- [설정 6] 높이(Z) 탐색 설정 ---
@@ -55,7 +55,7 @@ m = mujoco.MjModel.from_xml_path(MODEL_PATH)
 d = mujoco.MjData(m)
 sim_robot = SimulatedRobot(m, d)
 
-port = 'COM3'           
+port = 'COM3'
 robot = Robot(device_name=port)
 
 if os.name == 'nt':
@@ -64,19 +64,19 @@ if os.name == 'nt':
 robot._disable_torque()
 
 # 초기화
-pwm = np.array(robot.read_position())   
-d.qpos[:6] = sim_robot._pwm2pos(pwm) + JOINT_OFFSETS     
+pwm = np.array(robot.read_position())
+d.qpos[:6] = sim_robot._pwm2pos(pwm) + JOINT_OFFSETS
 mujoco.mj_forward(m, d)
 
 teleop_active = True
 curr_pwm = pwm.copy()
-target_pwm = pwm.copy() 
+target_pwm = pwm.copy()
 
 JOINT_SPEED = 6
 
 def get_command_nonblocking():
     if os.name == 'nt':
-        if msvcrt.kbhit(): 
+        if msvcrt.kbhit():
             char = msvcrt.getwch()
             return char
         return None
@@ -102,28 +102,28 @@ def move_to_pos_blocking(target_full_pwm, robot, sim_robot, m, d, viewer, speed=
     start_time = time.time()
     curr = np.array(robot.read_position())
     target_full_pwm = np.array(target_full_pwm)
-    
+
     while True:
         if time.time() - start_time > timeout:
             print("   [WARNING] 이동 타임아웃!")
             return False
 
         diff = target_full_pwm - curr
-        if np.all(np.abs(diff) < 10): 
+        if np.all(np.abs(diff) < 10):
             break
-        
+
         step = np.clip(diff, -speed, speed)
         curr = (curr + step).astype(int)
-        
+
         robot.set_goal_pos(curr)
-        
+
         d.qpos[:6] = sim_robot._pwm2pos(curr) + JOINT_OFFSETS
         mujoco.mj_step(m, d)
         viewer.sync()
-        
+
         cmd = get_command_nonblocking()
         if cmd == 'x': return False
-        
+
         time.sleep(0.01)
     return True
 
@@ -133,40 +133,40 @@ def find_safe_floor_j2(current_pose, target_j2, sim_robot, m, d):
     start_j2 = test_pose[1]
     step = -10 if target_j2 < start_j2 else 10
     safe_j2 = start_j2
-    
+
     for val in range(start_j2, target_j2, step):
         test_pose[1] = val
         d.qpos[:6] = sim_robot._pwm2pos(test_pose) + JOINT_OFFSETS
         mujoco.mj_kinematics(m, d)
         z_height = sim_robot.read_ee_pos(EE_SITE_NAME)[2]
-        
-        if z_height < (FLOOR_LIMIT + 0.02): 
+
+        if z_height < (FLOOR_LIMIT + 0.02):
             return safe_j2
         safe_j2 = val
-        
+
     return target_j2
 
 def sweep_until_collision(direction, robot, sim_robot, m, d, viewer):
     curr_pwm = np.array(robot.read_position())
-    joint_idx = 0 
-    
+    joint_idx = 0
+
     print(f"   >>> 스윕 시작 ({'왼쪽' if direction > 0 else '오른쪽'})...")
-    
+
     while True:
         curr_pwm[joint_idx] += PINCER_CONFIG['SWEEP_SPEED'] * direction
-        
+
         if (direction > 0 and curr_pwm[joint_idx] > PINCER_CONFIG['LEFT_LIMIT_J0']) or \
            (direction < 0 and curr_pwm[joint_idx] < PINCER_CONFIG['RIGHT_LIMIT_J0']):
-            return False, curr_pwm[joint_idx] 
+            return False, curr_pwm[joint_idx]
 
         robot.set_goal_pos(curr_pwm)
         d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
         mujoco.mj_step(m, d)
         viewer.sync()
-        
+
         real_pos = np.array(robot.read_position())
         error = abs(curr_pwm[joint_idx] - real_pos[joint_idx])
-        
+
         if error > PINCER_CONFIG['COLLISION_THRESH']:
             print(f"   !!! 충돌 감지! J0={real_pos[joint_idx]} (Err: {error})")
             curr_pwm[joint_idx] -= (PINCER_CONFIG['SWEEP_SPEED'] * direction * 5)
@@ -182,14 +182,15 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
     curr_pwm = np.array(robot.read_position())
     joint_idx = 1 # J2 (Waist)
 
+
     print("   >>> 하강 시작 (DESCEND)...")
-    
+
     target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
     direction = -1 if curr_pwm[joint_idx] > target_val else 1
-    
+
     while True:
         curr_pwm[joint_idx] += Z_SEARCH_CONFIG['DESCEND_SPEED'] * direction
-        
+
         if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
            (direction > 0 and curr_pwm[joint_idx] > target_val):
             print("   -> 바닥 한계 도달 (충돌 없음)")
@@ -199,21 +200,21 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
         d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
         mujoco.mj_step(m, d)
         viewer.sync()
-        
+
         # --- 다관절 오차 감시 ---
         real_pos = np.array(robot.read_position())
-        
+
         err_j2 = abs(curr_pwm[1] - real_pos[1])
         err_j3 = abs(curr_pwm[2] - real_pos[2])
         err_j4 = abs(curr_pwm[3] - real_pos[3])
-        
+
         THRESH_MAIN = 30
         THRESH_SUB  = 60
         
         if (err_j2 > THRESH_MAIN) or (err_j3 > THRESH_SUB) or (err_j4 > THRESH_SUB):
             print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
             collision_pose = real_pos.copy()
-            
+
             # [긴급 회피] J2 최대 상승
             print("   >>> [긴급 회피] J2 최대 상승 (Lift Up)")
             safe_pwm = real_pos.copy()
@@ -228,7 +229,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
 
 def run_pincer_search(robot, sim_robot, m, d, viewer):
     print("\n=== [G] 핀서 탐색 (X축) 시작 ===")
-    
+
     # 1. 초기화
     pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
@@ -251,7 +252,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
     pwm[0] = PINCER_CONFIG['LEFT_LIMIT_J0']
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
-    
+
     pwm = np.array([PINCER_CONFIG['LEFT_LIMIT_J0'], 1234, 2310, 1745, 3000, 2009])
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
@@ -263,7 +264,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     # 7. 중앙 정렬
     center_j0 = int((angle_right + angle_left) / 2)
     print(f"Step 7: 중앙({center_j0}) 정렬")
-    
+
     pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
     pwm[0] = angle_left
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
@@ -278,7 +279,7 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
     [Z축 탐색] 회피 -> 전개 -> 스윙 -> 타격
     """
     print(f"\n=== [Z] 높이 탐색 시작 (Target: {target_j0}) ===")
-    
+
     # [1] 회피 방향 결정 (Sidestep)
     mid_point = (PINCER_CONFIG['LEFT_LIMIT_J0'] + PINCER_CONFIG['RIGHT_LIMIT_J0']) / 2
     if target_j0 > mid_point:
@@ -289,17 +290,17 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
     # [2] 웅크리기 & 회피
     print("Step Z-1: 회피 기동 (Sidestep)")
     safe_pose = PINCER_CONFIG['INITIAL_POSE'].copy()
-    safe_pose[0] = safe_side_j0 
-    
+    safe_pose[0] = safe_side_j0
+
     if not move_to_pos_blocking(safe_pose, robot, sim_robot, m, d, viewer, speed=5): return safe_pose
     curr_pwm = safe_pose.copy()
 
     # [3] 허공에서 최대 신전 (Expand)
     print("Step Z-2: 허공에서 최대 신전")
-    
+
     curr_pwm[1] = JOINT_LIMITS[1][1] # J2 Max
     if not move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=5): return curr_pwm
-    
+
     curr_pwm[3] = JOINT_LIMITS[3][0] # J4 Max
     if not move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=5): return curr_pwm
     
@@ -323,7 +324,7 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
     # [6] 하강 및 충돌 감지 (The Chop)
     print("Step Z-5: 하강 및 충돌 감지")
     found, collision_pose = descend_and_detect_z(robot, sim_robot, m, d, viewer)
-    
+
     if found:
         print("=== 충돌 감지 성공 ===")
         
@@ -381,31 +382,31 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 except: key = ''
             else:
                 key = cmd[0] if len(cmd) > 0 else ''
-            
+
             if key == 'x':
                 robot._disable_torque()
                 print("finish")
                 break
-            
+
             if key == 'g':
                 # G키: 탐색 수행 후 중앙값 저장
                 final_pwm = run_pincer_search(robot, sim_robot, m, d, viewer)
-                
+
                 # 중앙값 추출 (final_pwm[0]가 중앙임)
                 LAST_FOUND_CENTER_J0 = final_pwm[0]
                 print(f"★ 중앙값 기억됨: {LAST_FOUND_CENTER_J0}")
-                
+
                 curr_pwm = final_pwm.copy()
                 target_pwm = final_pwm.copy()
                 key = ''
-            
+
             elif key == 'z':
                 # Z키: 기억된 중앙값이 없으면 현재 위치 사용
                 target_j0 = LAST_FOUND_CENTER_J0 if LAST_FOUND_CENTER_J0 is not None else robot.read_position()[0]
-                
+
                 if LAST_FOUND_CENTER_J0 is None:
                     print("!!! 주의: G키 탐색 기록이 없어 현재 위치를 사용합니다.")
-                
+
                 final_pwm = run_z_search(robot, sim_robot, m, d, viewer, target_j0)
                 curr_pwm = final_pwm.copy()
                 target_pwm = final_pwm.copy()
@@ -414,7 +415,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
         if teleop_active and key != '':
             next_target_pwm = target_pwm.copy()
             idx = -1; change = 0
-            
+
             if key == 'a':   idx = 0; change = JOINT_SPEED * DIR[0]
             elif key == 'd': idx = 0; change = -JOINT_SPEED * DIR[0]
             elif key == 'e': idx = 1; change = JOINT_SPEED * DIR[1]
@@ -452,9 +453,9 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
                         sim_pos_prediction = sim_robot._pwm2pos(next_target_pwm) + JOINT_OFFSETS
                         d.qpos[:6] = sim_pos_prediction
-                        mujoco.mj_kinematics(m, d) 
+                        mujoco.mj_kinematics(m, d)
                         future_z = sim_robot.read_ee_pos(EE_SITE_NAME)[2]
-                        
+
                         is_safe_height = (future_z >= FLOOR_LIMIT)
                         is_escaping_floor = (current_z < FLOOR_LIMIT) and (future_z > current_z)
 
@@ -468,7 +469,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                     print(f"[차단] J{idx+1} 한계 도달! ({int(next_val)})")
 
         if teleop_active:
-            MAX_CHANGE = 10 
+            MAX_CHANGE = 10
             diff = target_pwm - curr_pwm
             step = np.clip(diff, -MAX_CHANGE, MAX_CHANGE)
             curr_pwm = (curr_pwm + step).astype(int)
