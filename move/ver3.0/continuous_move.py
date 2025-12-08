@@ -5,53 +5,57 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import os
-import math 
+import math
+import yaml
 
 from interface import SimulatedRobot
 from robot import Robot
 
-port = 'COM3'
+from utils import pwm_to_degree
+# =========================================================
+# Load Config
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.yaml')
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'low_cost_robot/scene.xml')
-EE_SITE_NAME = 'joint6'
+with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
 
-GRIPPER_OPEN_PWM  = 2979
-GRIPPER_CLOSE_PWM = 1901
+# --- [일반 설정] ---
+port = config['settings']['port']
+EE_SITE_NAME = config['settings']['ee_site_name']
+GRIPPER_OPEN_PWM  = config['settings']['gripper_open_pwm']
+GRIPPER_CLOSE_PWM = config['settings']['gripper_close_pwm']
 JOINT6_POSITION = None
+
 # --- [설정 1] 오프셋 (User Settings) ---
-JOINT_OFFSETS = np.array([0.00, 0.25, -1.57, 0.00, 2.29, 0.00])
+JOINT_OFFSETS = np.array(config['joint_config']['offsets'])
 
 # --- [설정 2] 모터 방향 ---
-DIR = np.array([1, 1, 1, 1, 1, 1])
+DIR = np.array(config['joint_config']['motor_dir'])
 
 # --- [설정 3] 관절별 허용 범위 (User Settings) ---
-JOINT_LIMITS = [
-    (900, 3000),    # J1: 몸통
-    (800, 2000),    # J2: 허리
-    (1000, 3500),   # J3: 팔꿈치
-    (700, 3500),    # J4: 손목 끄덕
-    (0, 4095),      # J5: 손목 회전
-    (1500, 3500)    # J6: 그리퍼
-]
+JOINT_LIMITS = config['joint_config']['limits']
 
 # --- [설정 4] 바닥 충돌 제한 높이 ---
-FLOOR_LIMIT = 0.07
+FLOOR_LIMIT = config['settings']['floor_limit']
 
 # --- [설정 5] 자동 탐색 설정 ---
 PINCER_CONFIG = {
-    'SWEEP_SPEED': 6,
-    'COLLISION_THRESH': 60,
-    'RIGHT_LIMIT_J0': 993,
-    'LEFT_LIMIT_J0': 3000,
-    'INITIAL_POSE': np.array([2048, 1623, 1171, 1289, 3000, 2130])
+    'SWEEP_SPEED': config['pincer_search']['sweep_speed'],
+    'COLLISION_THRESH': config['pincer_search']['collision_thresh'],
+    'RIGHT_LIMIT_J0': config['pincer_search']['right_limit_j0'],
+    'LEFT_LIMIT_J0': config['pincer_search']['left_limit_j0'],
+    'INITIAL_POSE': np.array(config['pincer_search']['initial_pose'])
 }
 
 # --- [설정 6] 높이(Z) 탐색 설정 ---
 Z_SEARCH_CONFIG = {
-    'DESCEND_SPEED': 2,        # 하강 속도
-    'COLLISION_THRESH': 60,    # 충돌 감지 민감도
-    'LOWEST_J2_PWM': 850,      # 하강 한계
-    'LIFT_J2_PWM': 1900        # 복귀 시 허리 높이
+    'DESCEND_SPEED': config['z_search']['descend_speed'],        # 하강 속도
+    'COLLISION_THRESH': config['z_search']['collision_thresh'],    # 충돌 감지 민감도
+    'LOWEST_J2_PWM': config['z_search']['lowest_j2_pwm'],      # 하강 한계
+    'LIFT_J2_PWM': config['z_search']['lift_j2_pwm']        # 복귀 시 허리 높이
 }
+
+JOINT_SPEED = config['settings']['joint_speed']
 
 m = mujoco.MjModel.from_xml_path(MODEL_PATH)
 d = mujoco.MjData(m)
@@ -74,7 +78,6 @@ teleop_active = True
 curr_pwm = pwm.copy()
 target_pwm = pwm.copy()
 
-JOINT_SPEED = 6
 
 def get_command_nonblocking():
     if os.name == 'nt':
@@ -91,15 +94,6 @@ def get_command_nonblocking():
 # =========================================================
 #  헬퍼 함수
 # =========================================================
-
-def pwm_to_degree(pwm_value):
-    """
-    다이나믹셀 PWM(0~4095)을 각도(Degree)로 변환
-    XL430/330 기준: 1 tick = 0.088도
-    """
-    # 0 ~ 4095 -> 0 ~ 360도
-    return pwm_value * 0.088
-
 def move_to_pos_blocking(target_full_pwm, robot, sim_robot, m, d, viewer, speed=6, timeout=8.0):
     start_time = time.time()
     curr = np.array(robot.read_position())
@@ -451,7 +445,6 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
 # =========================================================
 #  메인 루프
 # =========================================================
-
 print("=== 로봇 통합 제어 시스템 ===")
 print(f"바닥 안전 높이: {FLOOR_LIMIT}m")
 print("G: X축(너비) 탐색 -> 중앙 기억")
