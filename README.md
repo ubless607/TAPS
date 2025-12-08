@@ -1,5 +1,5 @@
 # TAPS: Low-Cost Robot Arm Project
-<img src="project.png" alt="project" width="700">
+![project](project.png)
 
 Conventional robot control relies on cameras or LiDAR, but these sensors are highly vulnerable to environmental factors such as lighting changes, smoke, fog, occlusion, and clutter. It is therefore essential to have alternative sensing modalities when vision sensors are rendered ineffective.
 
