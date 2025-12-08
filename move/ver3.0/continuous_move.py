@@ -330,7 +330,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
             angle_err=math.asin(0.02/distance) # 로봇팔 두께로 인한 각도 오차
             angle_diff=abs(pwm_to_degree(angle_left)-pwm_to_degree(angle_right)) # 로봇팔 각도차
-            angle_diff-=(angle_err*180/math.pi)
+            # angle_diff-=(angle_err*180/math.pi)
 
             # 물체의 반지름 및 중심 계산
             radius,center=calc_radius_and_center(angle_diff,position)
