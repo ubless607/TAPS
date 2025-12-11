@@ -1,5 +1,5 @@
 settings:
-  port: 'COM3'
+  port: 'COM5'
   ee_site_name: 'joint6'
   floor_limit: 0.07
   gripper_open_pwm: 2979
@@ -20,12 +20,13 @@ joint_config:
 pincer_search:
   sweep_speed: 6
   collision_thresh: 60
-  right_limit_j0: 993
-  left_limit_j0: 3000
-  initial_pose: [2048, 1623, 1171, 1289, 3000, 2130]
+  initial_pose: [2048, 1900, 1050, 1000, 3300, 2000]
+  right_extended_pose: [990, 1900, 3150, 1850, 3300, 2000]  # 우측 한계에서의 확장 자세
+  left_extended_pose: [3000, 1900, 3150, 1850, 3300, 2000]  # 좌측 한계에서의 확장 자세
+  approach_target_offset: [0, 1080, 3150, 1850, 3300, 2000]  # 거리 측정 시 목표 자세 (J0는 중앙값 유지)
 
 z_search:
-  descend_speed: 2
+  descend_speed: 10
   collision_thresh: 60
   lowest_j2_pwm: 850
   lift_j2_pwm: 1900

@@ -10,6 +10,8 @@ import yaml
 
 from interface import SimulatedRobot
 from robot import Robot
+import sounddevice as sd
+from scipy.io.wavfile import write
 
 from utils import pwm_to_degree
 # =========================================================
@@ -42,9 +44,12 @@ FLOOR_LIMIT = config['settings']['floor_limit']
 PINCER_CONFIG = {
     'SWEEP_SPEED': config['pincer_search']['sweep_speed'],
     'COLLISION_THRESH': config['pincer_search']['collision_thresh'],
-    'RIGHT_LIMIT_J0': config['pincer_search']['right_limit_j0'],
-    'LEFT_LIMIT_J0': config['pincer_search']['left_limit_j0'],
-    'INITIAL_POSE': np.array(config['pincer_search']['initial_pose'])
+    'INITIAL_POSE': np.array(config['pincer_search']['initial_pose']),
+    'RIGHT_EXTENDED_POSE': np.array(config['pincer_search']['right_extended_pose']),
+    'LEFT_EXTENDED_POSE': np.array(config['pincer_search']['left_extended_pose']),
+    'APPROACH_TARGET_OFFSET': np.array(config['pincer_search']['approach_target_offset']),
+    'RIGHT_LIMIT_J0': config['pincer_search']['right_extended_pose'][0],  # J0 값 추출
+    'LEFT_LIMIT_J0': config['pincer_search']['left_extended_pose'][0]     # J0 값 추출
 }
 
 # --- [설정 6] 높이(Z) 탐색 설정 ---
@@ -187,60 +192,149 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
     curr_pwm = np.array(robot.read_position())
     joint_idx = 1 # J2 (Waist)
 
-    print("   >>> 하강 시작 (DESCEND)...")
+    print("   >>> 하강 시작 (DESCEND) & 오디오 녹음 시작...")
 
+# --- [AUDIO] 녹음 시작 (Non-blocking) ---
+    fs = 44100
+    max_duration = 10  # 최대 10초 (필요시 조정)
+    
+    # sd.rec runs in background
+    recording = sd.rec(int(max_duration * fs), samplerate=fs, channels=1, dtype='int16')
+    rec_start_time = time.time()
+    
     target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
     direction = -1 if curr_pwm[joint_idx] > target_val else 1
+    
+    collision_detected = False
+    collision_pose = None
 
-    while True:
-        curr_pwm[joint_idx] += Z_SEARCH_CONFIG['DESCEND_SPEED'] * direction
+    try:
+        while True:
+            curr_pwm[joint_idx] += Z_SEARCH_CONFIG['DESCEND_SPEED'] * direction
 
-        if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
-           (direction > 0 and curr_pwm[joint_idx] > target_val):
-            print("   -> 바닥 한계 도달 (충돌 없음)")
-            return False, np.array(robot.read_position())
+            # 바닥 한계 도달 체크
+            if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
+               (direction > 0 and curr_pwm[joint_idx] > target_val):
+                print("   -> 바닥 한계 도달 (충돌 없음)")
+                sd.stop() # Stop recording if no collision
+                break
 
-        robot.set_goal_pos(curr_pwm)
-        d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
-        mujoco.mj_step(m, d)
-        viewer.sync()
+            robot.set_goal_pos(curr_pwm)
+            d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
+            mujoco.mj_step(m, d)
+            viewer.sync()
 
-        # --- 다관절 오차 감시 ---
-        real_pos = np.array(robot.read_position())
-
-        err_j2 = abs(curr_pwm[1] - real_pos[1])
-        err_j3 = abs(curr_pwm[2] - real_pos[2])
-        err_j4 = abs(curr_pwm[3] - real_pos[3])
-
-        THRESH_MAIN = 30
-        THRESH_SUB  = 60
-
-        if (err_j2 > THRESH_MAIN) or (err_j3 > THRESH_SUB) or (err_j4 > THRESH_SUB):
-            print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
-            for _ in range(50):
-                # 꺾임 상쇄
-                curr_pwm[1] += (Z_SEARCH_CONFIG['DESCEND_SPEED'])
-                robot.set_goal_pos(curr_pwm)
-                d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
-                mujoco.mj_step(m, d)
-                viewer.sync()
-                time.sleep(0.01)
-            
+            # --- 다관절 오차 감시 ---
             real_pos = np.array(robot.read_position())
-            collision_pose = real_pos.copy()
-            time.sleep(1)
-            print("위치 저장")
-            # [긴급 회피] J2 최대 상승
-            print("   >>> [긴급 회피] J2 최대 상승 (Lift Up)")
-            safe_pwm = real_pos.copy()
-            safe_pwm[1] = JOINT_LIMITS[1][1] # 2000
 
-            move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=5)
-            return True, collision_pose
+            err_j2 = abs(curr_pwm[1] - real_pos[1])
+            err_j3 = abs(curr_pwm[2] - real_pos[2])
+            err_j4 = abs(curr_pwm[3] - real_pos[3])
 
-        cmd = get_command_nonblocking()
-        if cmd == 'x': return False, None
-        time.sleep(0.01)
+            THRESH_MAIN = 60
+            THRESH_SUB  = 60
+
+            if (err_j2 > THRESH_MAIN) or (err_j3 > THRESH_SUB) or (err_j4 > THRESH_SUB):
+                print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
+                
+                # --- [AUDIO] 충돌 즉시 녹음 중단 ---
+                sd.stop()
+                elapsed = time.time() - rec_start_time
+                valid_samples = min(int(elapsed * fs), len(recording))
+                
+                # 1. 실제 녹음된 데이터만 가져오기
+                raw_data = recording[:valid_samples]
+                
+                # 2. 증폭 (Peak Normalization with Safety Limit)
+                audio_float = raw_data.astype(np.float32)
+                peak = np.max(np.abs(audio_float))
+                
+                # 게인 계산 (최대 300배 제한)
+                if peak > 10: 
+                    target_level = 32000.0
+                    calculated_gain = target_level / peak
+                    MAX_GAIN = 300.0 
+                    gain = min(calculated_gain, MAX_GAIN)
+                    
+                    if gain > 1.0:
+                        print(f"   >>> [AUDIO] 증폭 (Gain: {gain:.2f}x)")
+                        audio_float = audio_float * gain
+                
+                # 3. 값 클리핑 (Value Clipping) - 이 단계가 먼저 수행되어야 함
+                audio_float = np.clip(audio_float, -32768, 32767)
+                processed_full_audio = audio_float.astype(np.int16).flatten()
+
+                # 4. [NEW] 1초 구간 자르기 (Time Cropping)
+                # 이미 증폭된 데이터(processed_full_audio)에서 피크를 찾습니다.
+                peak_index = np.argmax(np.abs(processed_full_audio))
+                print(peak_index, fs)
+                
+                target_length = 1 * fs  # 1초
+                pre_buffer = int(0.15 * fs) # 피크 0.2초 전부터 시작
+                
+                start_index = peak_index - pre_buffer
+                end_index = start_index + target_length
+                
+                # 1초 길이의 빈 버퍼 생성 (0으로 채움)
+                final_1sec_clip = np.zeros(target_length, dtype=np.int16)
+                
+                # 원본 범위 계산 (인덱스 에러 방지)
+                src_start = max(0, start_index)
+                src_end = min(len(processed_full_audio), end_index)
+                
+                # 붙여넣을 위치 계산
+                dst_start = max(0, -start_index)
+                dst_end = dst_start + (src_end - src_start)
+                
+                # 데이터 복사
+                final_1sec_clip[dst_start:dst_end] = processed_full_audio[src_start:src_end]
+                
+                print(f"   >>> [AUDIO] 1초 구간 추출 완료 (Peak idx: {peak_index})")
+
+                # 5. 파일 저장
+                filename = "tmp_collision_1sec.wav"
+                write(filename, fs, final_1sec_clip)
+                print(f"   >>> [AUDIO] 저장 완료: {filename}")
+                
+                collision_detected = True
+                
+                # 꺾임 상쇄 (기존 로직)
+                for _ in range(50):
+                    curr_pwm[1] += (Z_SEARCH_CONFIG['DESCEND_SPEED'])
+                    robot.set_goal_pos(curr_pwm)
+                    d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
+                    mujoco.mj_step(m, d)
+                    viewer.sync()
+                    time.sleep(0.01)
+                
+                real_pos = np.array(robot.read_position())
+                collision_pose = real_pos.copy()
+                time.sleep(1)
+                print("위치 저장")
+                
+                # [긴급 회피] J2 최대 상승
+                print("   >>> [긴급 회피] J2 최대 상승 (Lift Up)")
+                safe_pwm = real_pos.copy()
+                safe_pwm[1] = JOINT_LIMITS[1][1] # 2000
+
+                move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=5)
+                break
+
+            cmd = get_command_nonblocking()
+            if cmd == 'x': 
+                sd.stop() # 취소 시 녹음 중지
+                return False, None
+            time.sleep(0.01)
+
+    finally:
+        # 루프가 어떻게 끝나든(정상종료/에러) 녹음이 계속 돌지 않도록 확실히 정지
+        sd.stop()
+
+    if collision_detected:
+        return True, collision_pose
+    else:
+        # 충돌 없이 끝났을 때도 저장을 원하면 여기서 write() 호출
+        return False, np.array(robot.read_position())
 
 def run_pincer_search(robot, sim_robot, m, d, viewer):
     print("\n=== [G] 핀서 탐색 (X축) 시작 ===")
@@ -253,14 +347,25 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     pwm[0] = PINCER_CONFIG['RIGHT_LIMIT_J0']
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
-    # 3. 팔 뻗기
-    pwm = np.array([PINCER_CONFIG['RIGHT_LIMIT_J0'], 1234, 2310, 1745, 3000, 2009])
+    # 3. 팔 뻗기 (우측)
+    pwm = PINCER_CONFIG['RIGHT_EXTENDED_POSE'].copy()
+    if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
+    pwm[1] = 1000
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
     # 4. 우 -> 좌 스윕
     found_r, angle_right = sweep_until_collision(1, robot, sim_robot, m, d, viewer)
     if not found_r: return np.array(robot.read_position())
     print(f"-> 오른쪽 경계: {angle_right}")
+    
+
+    # 4-1. 뒷걸음질
+    start_pwm = np.array(robot.read_position())
+    start_pwm[0] -= 100
+    if not move_to_pos_blocking(start_pwm, robot, sim_robot, m, d, viewer): return start_pwm
+    target_pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
+    target_pwm[0] = start_pwm[0]
+    if not move_to_pos_blocking(target_pwm, robot, sim_robot, m, d, viewer): return target_pwm
 
     # 5. 왼쪽 이동
     pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
@@ -268,13 +373,24 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     pwm[0] = PINCER_CONFIG['LEFT_LIMIT_J0']
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
-    pwm = np.array([PINCER_CONFIG['LEFT_LIMIT_J0'], 1234, 2310, 1745, 3000, 2009])
+    # 팔 뻗기 (좌측)
+    pwm = PINCER_CONFIG['LEFT_EXTENDED_POSE'].copy()
+    if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
+    pwm[1] = 1000
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
     # 6. 좌 -> 우 스윕
     found_l, angle_left = sweep_until_collision(-1, robot, sim_robot, m, d, viewer)
     if not found_l: return np.array(robot.read_position())
     print(f"-> 왼쪽 경계: {angle_left}")
+
+    # 6-1. 뒷걸음질
+    start_pwm = np.array(robot.read_position())
+    start_pwm[0] += 100
+    if not move_to_pos_blocking(start_pwm, robot, sim_robot, m, d, viewer): return start_pwm
+    target_pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
+    target_pwm[0] = start_pwm[0]
+    if not move_to_pos_blocking(target_pwm, robot, sim_robot, m, d, viewer): return target_pwm
 
     # 7. 중앙 정렬
     center_j0 = int((angle_right + angle_left) / 2)
@@ -291,14 +407,15 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     start_pwm = np.array(robot.read_position())
 
     # 목표 지점 설정 (J0는 현재 유지, 나머지는 확장)
-    target_pwm = np.array([start_pwm[0], 1150, 2900, 1950, start_pwm[4]+200, start_pwm[5]])
+    target_pwm = PINCER_CONFIG['APPROACH_TARGET_OFFSET'].copy()
+    target_pwm[0] = start_pwm[0]  # J0는 현재 중앙값 유지
     total_pwm_dist = np.linalg.norm(target_pwm - start_pwm)
     print(f"-> 전체 경로 길이(PWM Units): {total_pwm_dist:.2f}")
 
     # --- 접근 루프 설정 ---
-    steps = 100
+    steps = 150
     collision_detected = False
-    threshold = 100 # PINCER_CONFIG['COLLISION_THRESH']
+    threshold = 200 # PINCER_CONFIG['COLLISION_THRESH']
 
     for i in range(steps):
         # 1. 선형 보간 (Linear Interpolation)
