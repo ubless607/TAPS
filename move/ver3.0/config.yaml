@@ -1,5 +1,5 @@
 settings:
-  port: 'COM5'
+  port: 'COM3'
   ee_site_name: 'joint6'
   floor_limit: 0.07
   gripper_open_pwm: 2979
