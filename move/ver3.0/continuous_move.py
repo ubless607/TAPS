@@ -12,8 +12,9 @@ from interface import SimulatedRobot
 from robot import Robot
 import sounddevice as sd
 from scipy.io.wavfile import write
+import torch
 
-from utils import pwm_to_degree
+from utils import classify_impacts_in_wav_finetuned, pwm_to_degree, load_finetuned_panns
 # =========================================================
 # Load Config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.yaml')
@@ -295,6 +296,21 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 filename = "tmp_collision_1sec.wav"
                 write(filename, fs, final_1sec_clip)
                 print(f"   >>> [AUDIO] 저장 완료: {filename}")
+
+
+                results = classify_impacts_in_wav_finetuned(
+                    wav_path=filename,
+                    panns_model=panns_model,
+                    device=device
+                )
+                
+                print(f"\nResults for {filename}:")
+                if not results:
+                    print("No impacts detected.")
+                else:
+                    for res in results:
+                        print(f"[{res['impact_idx']}] Time: {res['impact_time']:.3f}s | "
+                            f"Pred: {res['pred_material']} ({res['confidence']*100:.1f}%)")                
                 
                 collision_detected = True
                 
@@ -567,6 +583,17 @@ print(f"바닥 안전 높이: {FLOOR_LIMIT}m")
 print("G: X축(너비) 탐색 -> 중앙 기억")
 print("Z: Z축(높이) 탐색 (기억된 중앙으로 스윙)")
 print("W/A/S/D...: 수동 제어")
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+BEST_MODEL_PATH = "../../sound_classification/panns_finetuned_best.pth"
+# (Make sure this path matches where you saved 'best_save_path' in your training loop)
+
+# 2. Load the model
+try:
+    panns_model, at = load_finetuned_panns(BEST_MODEL_PATH, device, num_classes=5)
+    
+except FileNotFoundError:
+    print(f"Error: Could not find model at {BEST_MODEL_PATH}. Check your path.")
 
 # [중요] 마지막으로 찾은 중앙값을 기억하는 변수
 LAST_FOUND_CENTER_J0 = None
