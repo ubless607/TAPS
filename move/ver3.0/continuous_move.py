@@ -195,11 +195,10 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
 
     print("   >>> 하강 시작 (DESCEND) & 오디오 녹음 시작...")
 
-# --- [AUDIO] 녹음 시작 (Non-blocking) ---
+    # --- [AUDIO] 녹음 시작 (Non-blocking) ---
     fs = 44100
-    max_duration = 10  # 최대 10초 (필요시 조정)
+    max_duration = 10  # 최대 10초
     
-    # sd.rec runs in background
     recording = sd.rec(int(max_duration * fs), samplerate=fs, channels=1, dtype='int16')
     rec_start_time = time.time()
     
@@ -217,7 +216,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
             if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
                (direction > 0 and curr_pwm[joint_idx] > target_val):
                 print("   -> 바닥 한계 도달 (충돌 없음)")
-                sd.stop() # Stop recording if no collision
+                sd.stop() 
                 break
 
             robot.set_goal_pos(curr_pwm)
@@ -250,7 +249,6 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 audio_float = raw_data.astype(np.float32)
                 peak = np.max(np.abs(audio_float))
                 
-                # 게인 계산 (최대 300배 제한)
                 if peak > 10: 
                     target_level = 32000.0
                     calculated_gain = target_level / peak
@@ -260,43 +258,50 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                     if gain > 1.0:
                         print(f"   >>> [AUDIO] 증폭 (Gain: {gain:.2f}x)")
                         audio_float = audio_float * gain
+
+                # ---------------------------------------------------------
+                # [NEW] 2.5 Hard Thresholding (Noise Gating)
+                # ---------------------------------------------------------
+                # 데이터가 int16 스케일(32768)이므로, 0.01(1%)를 여기에 맞춰 변환합니다.
+                thresh_val = 32768.0 * 0.01  # threshold = 0.01 (1%)
                 
-                # 3. 값 클리핑 (Value Clipping) - 이 단계가 먼저 수행되어야 함
+                # 마스크 생성 (Threshold보다 작은 값은 0으로 만듦)
+                mask = (np.abs(audio_float) > thresh_val).astype(np.float32)
+                audio_float = audio_float * mask
+                print(f"   >>> [AUDIO] 노이즈 제거 완료 (Threshold: 0.01)")
+                # ---------------------------------------------------------
+
+                # 3. 값 클리핑 (Value Clipping)
                 audio_float = np.clip(audio_float, -32768, 32767)
                 processed_full_audio = audio_float.astype(np.int16).flatten()
 
-                # 4. [NEW] 1초 구간 자르기 (Time Cropping)
-                # 이미 증폭된 데이터(processed_full_audio)에서 피크를 찾습니다.
+                # 4. 1초 구간 자르기 (Time Cropping)
+                # 노이즈가 제거된 상태에서 피크를 찾으므로 더 정확합니다.
                 peak_index = np.argmax(np.abs(processed_full_audio))
                 print(peak_index, fs)
                 
-                target_length = 1 * fs  # 1초
-                pre_buffer = int(0.15 * fs) # 피크 0.2초 전부터 시작
+                target_length = 1 * fs 
+                pre_buffer = int(0.15 * fs) 
                 
                 start_index = peak_index - pre_buffer
                 end_index = start_index + target_length
                 
-                # 1초 길이의 빈 버퍼 생성 (0으로 채움)
                 final_1sec_clip = np.zeros(target_length, dtype=np.int16)
                 
-                # 원본 범위 계산 (인덱스 에러 방지)
                 src_start = max(0, start_index)
                 src_end = min(len(processed_full_audio), end_index)
                 
-                # 붙여넣을 위치 계산
                 dst_start = max(0, -start_index)
                 dst_end = dst_start + (src_end - src_start)
                 
-                # 데이터 복사
                 final_1sec_clip[dst_start:dst_end] = processed_full_audio[src_start:src_end]
                 
                 print(f"   >>> [AUDIO] 1초 구간 추출 완료 (Peak idx: {peak_index})")
 
                 # 5. 파일 저장
                 filename = "tmp_collision_1sec.wav"
-                write(filename, fs, final_1sec_clip)
+                wav.write(filename, fs, final_1sec_clip)
                 print(f"   >>> [AUDIO] 저장 완료: {filename}")
-
 
                 results = classify_impacts_in_wav_finetuned(
                     wav_path=filename,
@@ -331,25 +336,23 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 # [긴급 회피] J2 최대 상승
                 print("   >>> [긴급 회피] J2 최대 상승 (Lift Up)")
                 safe_pwm = real_pos.copy()
-                safe_pwm[1] = JOINT_LIMITS[1][1] # 2000
+                safe_pwm[1] = JOINT_LIMITS[1][1] 
 
                 move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=5)
                 break
 
             cmd = get_command_nonblocking()
             if cmd == 'x': 
-                sd.stop() # 취소 시 녹음 중지
+                sd.stop() 
                 return False, None
             time.sleep(0.01)
 
     finally:
-        # 루프가 어떻게 끝나든(정상종료/에러) 녹음이 계속 돌지 않도록 확실히 정지
         sd.stop()
 
     if collision_detected:
         return True, collision_pose
     else:
-        # 충돌 없이 끝났을 때도 저장을 원하면 여기서 write() 호출
         return False, np.array(robot.read_position())
 
 def run_pincer_search(robot, sim_robot, m, d, viewer):
