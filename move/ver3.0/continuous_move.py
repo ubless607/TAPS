@@ -15,6 +15,7 @@ from scipy.io.wavfile import write
 import torch
 
 from utils import classify_impacts_in_wav_finetuned, pwm_to_degree, load_finetuned_panns
+from object_classification import SimpleObjectClassifier
 # =========================================================
 # Load Config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.yaml')
@@ -56,12 +57,16 @@ PINCER_CONFIG = {
 # --- [설정 6] 높이(Z) 탐색 설정 ---
 Z_SEARCH_CONFIG = {
     'DESCEND_SPEED': config['z_search']['descend_speed'],        # 하강 속도
-    'COLLISION_THRESH': config['z_search']['collision_thresh'],    # 충돌 감지 민감도
+    'THRESH_MAIN': config['z_search']['thresh_main'],            # J2 충돌 감지 임계값
+    'THRESH_SUB': config['z_search']['thresh_sub'],              # J3, J4 충돌 감지 임계값
     'LOWEST_J2_PWM': config['z_search']['lowest_j2_pwm'],      # 하강 한계
     'LIFT_J2_PWM': config['z_search']['lift_j2_pwm']        # 복귀 시 허리 높이
 }
 
 JOINT_SPEED = config['settings']['joint_speed']
+obj_classifier = SimpleObjectClassifier(os.path.join(os.path.dirname(__file__),'object_database.yaml'))
+LAST_FOUND_CENTER_J0 = None
+LAST_ESTIMATED_RADIUS_CM = 0.0
 
 m = mujoco.MjModel.from_xml_path(MODEL_PATH)
 d = mujoco.MjData(m)
@@ -207,6 +212,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
     
     collision_detected = False
     collision_pose = None
+    results = None  # Initialize results variable
 
     try:
         while True:
@@ -231,8 +237,8 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
             err_j3 = abs(curr_pwm[2] - real_pos[2])
             err_j4 = abs(curr_pwm[3] - real_pos[3])
 
-            THRESH_MAIN = 60
-            THRESH_SUB  = 60
+            THRESH_MAIN = Z_SEARCH_CONFIG['THRESH_MAIN']
+            THRESH_SUB = Z_SEARCH_CONFIG['THRESH_SUB']
 
             if (err_j2 > THRESH_MAIN) or (err_j3 > THRESH_SUB) or (err_j4 > THRESH_SUB):
                 print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
@@ -245,19 +251,17 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 # 1. 실제 녹음된 데이터만 가져오기
                 raw_data = recording[:valid_samples]
                 
-                # 2. 증폭 (Peak Normalization with Safety Limit)
+                # 2. 증폭 (dB-based Gain)
                 audio_float = raw_data.astype(np.float32)
                 peak = np.max(np.abs(audio_float))
                 
-                if peak > 10: 
-                    target_level = 32000.0
-                    calculated_gain = target_level / peak
-                    MAX_GAIN = 300.0 
-                    gain = min(calculated_gain, MAX_GAIN)
+                if peak > 10:
+                    # dB 기반 증폭 (예: 20dB 증폭)
+                    gain_db = 35.0  # 증폭할 dB 값
+                    gain_linear = 10 ** (gain_db / 20.0)  # dB를 선형 gain으로 변환
                     
-                    if gain > 1.0:
-                        print(f"   >>> [AUDIO] 증폭 (Gain: {gain:.2f}x)")
-                        audio_float = audio_float * gain
+                    print(f"   >>> [AUDIO] 증폭 (+{gain_db}dB, Gain: {gain_linear:.2f}x)")
+                    audio_float = audio_float * gain_linear
 
                 # ---------------------------------------------------------
                 # [NEW] 2.5 Hard Thresholding (Noise Gating)
@@ -300,7 +304,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
 
                 # 5. 파일 저장
                 filename = "tmp_collision_1sec.wav"
-                wav.write(filename, fs, final_1sec_clip)
+                write(filename, fs, final_1sec_clip)
                 print(f"   >>> [AUDIO] 저장 완료: {filename}")
 
                 results = classify_impacts_in_wav_finetuned(
@@ -344,16 +348,16 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
             cmd = get_command_nonblocking()
             if cmd == 'x': 
                 sd.stop() 
-                return False, None
+                return False, None, None
             time.sleep(0.01)
 
     finally:
         sd.stop()
 
     if collision_detected:
-        return True, collision_pose
+        return True, collision_pose, results
     else:
-        return False, np.array(robot.read_position())
+        return False, np.array(robot.read_position()), None
 
 def run_pincer_search(robot, sim_robot, m, d, viewer):
     print("\n=== [G] 핀서 탐색 (X축) 시작 ===")
@@ -464,6 +468,9 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
             # 물체의 반지름 및 중심 계산
             radius,center=calc_radius_and_center(angle_diff,position)
+            global LAST_ESTIMATED_RADIUS_CM
+            LAST_ESTIMATED_RADIUS_CM = radius * 100.0  
+            print(f"   -> [System] Saved Radius for Classification: {LAST_ESTIMATED_RADIUS_CM:.2f} cm")            
             print(f"물체 반지름: {radius}")
             print(f"물체 중점 좌표: {center}")
             
@@ -549,7 +556,7 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
 
     # [6] 하강 및 충돌 감지 (The Chop)
     print("Step Z-5: 하강 및 충돌 감지")
-    found, collision_pose = descend_and_detect_z(robot, sim_robot, m, d, viewer)
+    found, collision_pose, results = descend_and_detect_z(robot, sim_robot, m, d, viewer)
 
     if found:
         print("=== 충돌 감지 성공 ===")
@@ -567,6 +574,23 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
         print(f"각도: {math.atan(tan)*180/math.pi}°")
         print(f"물체 높이: {height:.1f}cm")
         print(f"--------------------------------------------------")
+        predicted_material = "unknown"
+        if results and len(results) > 0:
+            predicted_material = results[0]['pred_material']
+
+        # --- [NEW] Final Object Classification ---
+        print("\n=== [FINAL] Object Identification ===")
+        if LAST_ESTIMATED_RADIUS_CM <= 0:
+            print("Warning: Radius not set. Did you run 'G' search first?")
+        else:
+            obj_match, match_log = obj_classifier.identify(
+                est_material=predicted_material,
+                est_radius_cm=LAST_ESTIMATED_RADIUS_CM,
+                est_height_cm=height
+            )
+            print(f">>> {match_log}")
+            if obj_match:
+                print(f">>> Final Decision: [{obj_match['name']}]")        
         print("=== [탐색 종료] 안전 높이 복귀 완료 ===")
 
     else:
@@ -588,8 +612,7 @@ print("Z: Z축(높이) 탐색 (기억된 중앙으로 스윙)")
 print("W/A/S/D...: 수동 제어")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-BEST_MODEL_PATH = "../../sound_classification/panns_finetuned_best.pth"
-# (Make sure this path matches where you saved 'best_save_path' in your training loop)
+BEST_MODEL_PATH = os.path.join(os.path.dirname(__file__), config['settings']['panns_model_path'])
 
 # 2. Load the model
 try:

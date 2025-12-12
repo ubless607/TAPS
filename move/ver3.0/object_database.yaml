@@ -1,0 +1,30 @@
+# Dimensions should be in Centimeters (cm).
+
+tolerance_settings:
+  radius_margin_cm: 1.5   # Allowable error for width/radius
+  height_margin_cm: 2.0   # Allowable error for height
+
+objects:
+  - id: "obj_01"
+    name: "Wooden Cylinder"
+    material: "wood"
+    radius: 3.0
+    height: 12.0
+
+  - id: "obj_02"
+    name: "Metal Box"
+    material: "metal"
+    radius: 4.5
+    height: 8.0
+
+  - id: "obj_03"
+    name: "Plastic Cup"
+    material: "plastic"
+    radius: 3.5
+    height: 10.0
+
+  - id: "obj_04"
+    name: "Glass Bottle"
+    material: "glass"
+    radius: 2.5
+    height: 15.0
