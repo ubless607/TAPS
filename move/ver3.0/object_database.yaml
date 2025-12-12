@@ -6,25 +6,55 @@ tolerance_settings:
 
 objects:
   - id: "obj_01"
-    name: "Wooden Cylinder"
-    material: "wood"
-    radius: 3.0
-    height: 12.0
+    name: "Cube"
+    material: "plastic"
+    radius: 2.8
+    height: 5.5
 
   - id: "obj_02"
-    name: "Metal Box"
-    material: "metal"
-    radius: 4.5
-    height: 8.0
+    name: "Plastic cup"
+    material: "plastic"
+    radius: 4.0
+    height: 13.5
 
   - id: "obj_03"
-    name: "Plastic Cup"
-    material: "plastic"
-    radius: 3.5
-    height: 10.0
+    name: "Coke can"
+    material: "aluminum"
+    radius: 3.1
+    height: 12.0
 
   - id: "obj_04"
-    name: "Glass Bottle"
-    material: "glass"
-    radius: 2.5
-    height: 15.0
+    name: "Hot6 can"
+    material: "aluminum"
+    radius: 2.75
+    height: 15.5
+
+  - id: "obj_05"
+    name: "Cup noodle"
+    material: "paper"
+    radius: 6.0
+    height: 11.0
+
+  - id: "obj_06"
+    name: "Box"
+    material: "paper"
+    radius: 4.0
+    height: 5.0
+
+  - id: "obj_07"
+    name: "Rice bowl"
+    material: "ceramic"
+    radius: 5.0
+    height: 6.0
+
+  - id: "obj_08"
+    name: "Mug"
+    material: "ceramic"
+    radius: 3.7
+    height: 9.0
+
+  - id: "obj_09"
+    name: "Pencil case"
+    material: "wood"
+    radius: 3.7
+    height: 10.0
