@@ -319,18 +319,18 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 else:
                     for res in results:
                         print(f"[{res['impact_idx']}] Time: {res['impact_time']:.3f}s | "
-                            f"Pred: {res['pred_material']} ({res['confidence']*100:.1f}%)")                
+                            f"Pred: {res['pred_material']} ({res['confidence']*100:.1f}%)")        
                 
                 collision_detected = True
                 
                 # 꺾임 상쇄 (기존 로직)
-                for _ in range(50):
-                    curr_pwm[1] += (Z_SEARCH_CONFIG['DESCEND_SPEED'])
-                    robot.set_goal_pos(curr_pwm)
-                    d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
-                    mujoco.mj_step(m, d)
-                    viewer.sync()
-                    time.sleep(0.01)
+                # for _ in range(50):
+                #     curr_pwm[1] += (Z_SEARCH_CONFIG['DESCEND_SPEED'])
+                #     robot.set_goal_pos(curr_pwm)
+                #     d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
+                #     mujoco.mj_step(m, d)
+                #     viewer.sync()
+                #     time.sleep(0.01)
                 
                 real_pos = np.array(robot.read_position())
                 collision_pose = real_pos.copy()
@@ -460,11 +460,11 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
             position=sim_robot.read_ee_pos(joint_name='joint6') # joint6의 위치
             distance=math.sqrt(position[0]**2+position[1]**2)
-            print(f"base-joint6 최단거리:{distance}")
+            print(f"base-joint6 최단거리:{distance+0.05}") # ee 길이 추가
 
             angle_err=math.asin(0.02/distance) # 로봇팔 두께로 인한 각도 오차
             angle_diff=abs(pwm_to_degree(angle_left)-pwm_to_degree(angle_right)) # 로봇팔 각도차
-            # angle_diff-=(angle_err*180/math.pi)
+            angle_diff-=(angle_err*180/math.pi)
 
             # 물체의 반지름 및 중심 계산
             radius,center=calc_radius_and_center(angle_diff,position)
@@ -564,14 +564,16 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
         # 1. 시뮬레이터 FK로 손끝 높이 계산 (참고용)
         d.qpos[:6] = sim_robot._pwm2pos(collision_pose) + JOINT_OFFSETS
         mujoco.mj_kinematics(m, d)
+        j2_pwm = collision_pose[1]
+        raw_deg = pwm_to_degree(j2_pwm)       # 모터 기준 (예: 122.76)
 
-        joint5_pos=sim_robot.read_ee_pos('joint5')
-        joint2_pos=sim_robot.read_ee_pos('joint2')
-        tan=(joint5_pos[2]-joint2_pos[2]-0.01)/(math.sqrt((joint5_pos[1]-joint2_pos[1])**2+(joint5_pos[0]-joint2_pos[0])**2))
+        # 2048(180도)이 수직 서있는 상태라면, 거기서 얼마나 숙였는지를 나타냄
+        diff_from_center = raw_deg - 90
+
         distance = math.sqrt(JOINT6_POSITION[0]**2 + JOINT6_POSITION[1]**2)
-        height=(distance * tan + 0.06) * 100 # base와 joint2 높이차(6cm) 추가
+        height=(distance*math.tan(diff_from_center*math.pi/180)+0.06)*100 # base와 joint2 높이차(6cm) 추가
         print(f"--------------------------------------------------")
-        print(f"각도: {math.atan(tan)*180/math.pi}°")
+        print(f"각도: {diff_from_center}°")
         print(f"물체 높이: {height:.1f}cm")
         print(f"--------------------------------------------------")
         predicted_material = "unknown"
