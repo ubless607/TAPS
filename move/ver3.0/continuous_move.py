@@ -257,7 +257,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 
                 if peak > 10:
                     # dB 기반 증폭 (예: 20dB 증폭)
-                    gain_db = 35.0  # 증폭할 dB 값
+                    gain_db = 2.0  # 증폭할 dB 값
                     gain_linear = 10 ** (gain_db / 20.0)  # dB를 선형 gain으로 변환
                     
                     print(f"   >>> [AUDIO] 증폭 (+{gain_db}dB, Gain: {gain_linear:.2f}x)")

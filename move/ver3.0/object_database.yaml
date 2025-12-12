@@ -1,8 +1,8 @@
 # Dimensions should be in Centimeters (cm).
 
 tolerance_settings:
-  radius_margin_cm: 1.5   # Allowable error for width/radius
-  height_margin_cm: 2.0   # Allowable error for height
+  radius_margin_percent: 10   # Allowable error for width/radius (%)
+  height_margin_percent: 10   # Allowable error for height (%)
 
 objects:
   - id: "obj_01"

@@ -5,7 +5,7 @@ import math
 class SimpleObjectClassifier:
     def __init__(self, config_path='object_database.yaml'):
         self.objects = []
-        self.margins = {'radius_margin_cm': 2.0, 'height_margin_cm': 2.0}
+        self.margins = {'radius_margin_percent': 10, 'height_margin_percent': 10}
         self.load_database(config_path)
 
     def load_database(self, config_path):
@@ -34,11 +34,15 @@ class SimpleObjectClassifier:
             if obj['material'].lower() != est_material.lower():
                 continue
 
-            # 2. Dimension Check (with Margins)
+            # 2. Dimension Check (with Percentage-based Margins)
             rad_diff = abs(obj['radius'] - est_radius_cm)
             h_diff = abs(obj['height'] - est_height_cm)
+            
+            # Calculate allowable margin as percentage of actual object dimension
+            rad_margin = obj['radius'] * (self.margins['radius_margin_percent'] / 100.0)
+            h_margin = obj['height'] * (self.margins['height_margin_percent'] / 100.0)
 
-            if rad_diff <= self.margins['radius_margin_cm'] and h_diff <= self.margins['height_margin_cm']:
+            if rad_diff <= rad_margin and h_diff <= h_margin:
                 # Calculate a simple error score (lower is better)
                 # We weight them equally here, but you can adjust weights.
                 score = rad_diff + h_diff
