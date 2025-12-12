@@ -1,5 +1,5 @@
 settings:
-  port: 'COM5'
+  port: 'COM3'
   ee_site_name: 'joint6'
   floor_limit: 0.07
   gripper_open_pwm: 2979
@@ -32,3 +32,6 @@ z_search:
   thresh_sub: 60      # J3, J4 충돌 감지 임계값
   lowest_j2_pwm: 850
   lift_j2_pwm: 1900
+
+colision:
+  colision_speed: 20

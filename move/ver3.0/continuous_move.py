@@ -15,6 +15,7 @@ from scipy.io.wavfile import write
 import torch
 
 from utils import classify_impacts_in_wav_finetuned, pwm_to_degree, load_finetuned_panns
+#from utils import pwm_to_degree
 from object_classification import SimpleObjectClassifier
 # =========================================================
 # Load Config
@@ -63,10 +64,17 @@ Z_SEARCH_CONFIG = {
     'LIFT_J2_PWM': config['z_search']['lift_j2_pwm']        # 복귀 시 허리 높이
 }
 
+# --- [설정 7] 충돌 움직임 설정 ---
+COLISION_CONFIG = {
+    'COLISION_SPEED' : config['colision']['colision_speed']
+}
+
 JOINT_SPEED = config['settings']['joint_speed']
 obj_classifier = SimpleObjectClassifier(os.path.join(os.path.dirname(__file__),'object_database.yaml'))
 LAST_FOUND_CENTER_J0 = None
 LAST_ESTIMATED_RADIUS_CM = 0.0
+LAST_ESTIMATED_HEIGHT_CM = 0.0
+LAST_ESTIMATED_DISTANCE_CM = 0.0
 
 m = mujoco.MjModel.from_xml_path(MODEL_PATH)
 d = mujoco.MjData(m)
@@ -194,9 +202,93 @@ def sweep_until_collision(direction, robot, sim_robot, m, d, viewer):
         if cmd == 'x': return False, None
         time.sleep(0.01)
 
-def descend_and_detect_z(robot, sim_robot, m, d, viewer):
+def detect_z(robot, sim_robot, m, d, viewer):
+    curr_pwm = np.array(robot.read_position())
+    joint_idx = 1  # J2 (Waist)
+
+    print("   >>> 하강 시작 (DESCEND) ...")
+
+    target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
+    direction = -1 if curr_pwm[joint_idx] > target_val else 1
+
+    collision_detected = False
+    collision_pose = None
+
+    try:
+        while True:
+            curr_pwm[joint_idx] += COLISION_CONFIG['COLISION_SPEED'] * direction
+
+            # 바닥 한계 도달 체크
+            if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
+               (direction > 0 and curr_pwm[joint_idx] > target_val):
+                print("   -> 바닥 한계 도달 (충돌 없음)")
+                break
+
+            robot.set_goal_pos(curr_pwm)
+            d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
+            mujoco.mj_step(m, d)
+            viewer.sync()
+
+            # --- 다관절 오차 감시 ---
+            real_pos = np.array(robot.read_position())
+
+            err_j2 = abs(curr_pwm[1] - real_pos[1])
+            err_j3 = abs(curr_pwm[2] - real_pos[2])
+            err_j4 = abs(curr_pwm[3] - real_pos[3])
+
+            THRESH_MAIN = Z_SEARCH_CONFIG['THRESH_MAIN']
+            THRESH_SUB = Z_SEARCH_CONFIG['THRESH_SUB']
+
+            if (err_j2 > THRESH_MAIN) or (err_j3 > THRESH_SUB) or (err_j4 > THRESH_SUB):
+                print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
+
+                collision_detected = True
+                collision_pose = real_pos.copy()  # 충돌 시점 실제 포즈 저장
+                time.sleep(1)
+                print("위치 저장")
+
+                # [긴급 회피] J2 최대 상승
+                print("   >>> [긴급 회피] J2 최대 상승 (Lift Up)")
+                safe_pwm = real_pos.copy()
+                safe_pwm[1] = JOINT_LIMITS[1][1]
+                move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=5)
+
+                break
+
+            cmd = get_command_nonblocking()
+            if cmd == 'x':
+                return False, None
+
+            time.sleep(0.01)
+
+    finally:
+        pass
+
+    if collision_detected:
+        return True, collision_pose
+    else:
+        return False, np.array(robot.read_position())
+
+
+
+def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pwm=None):
     curr_pwm = np.array(robot.read_position())
     joint_idx = 1 # J2 (Waist)
+
+    # ---------------------------------------------------------
+    # [NEW] J4를 먼저 원하는 타겟으로 기울이기 (Tilt) 후 강하
+    # ---------------------------------------------------------
+    if j4_target_pwm is not None:
+        print(f"   >>> [PRE] J4 tilt to target: {j4_target_pwm}")
+        tilt_pwm = curr_pwm.copy()
+        tilt_pwm[3] = j4_target_pwm  # J4 (index=3)
+
+        # 기존에 쓰던 blocking 이동 함수 재사용 (속도는 취향대로)
+        move_to_pos_blocking(tilt_pwm, robot, sim_robot, m, d, viewer, speed=5)
+
+        # 이동 후 현재값 갱신 (실제로 도달한 값을 기준으로 강하 시작)
+        curr_pwm = np.array(robot.read_position())
+    # ---------------------------------------------------------
 
     print("   >>> 하강 시작 (DESCEND) & 오디오 녹음 시작...")
 
@@ -209,14 +301,15 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
     
     target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
     direction = -1 if curr_pwm[joint_idx] > target_val else 1
-    
+    safe_high_pose = curr_pwm.copy()
+
     collision_detected = False
     collision_pose = None
     results = None  # Initialize results variable
 
     try:
         while True:
-            curr_pwm[joint_idx] += Z_SEARCH_CONFIG['DESCEND_SPEED'] * direction
+            curr_pwm[joint_idx] += COLISION_CONFIG['COLISION_SPEED'] * direction
 
             # 바닥 한계 도달 체크
             if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
@@ -330,7 +423,7 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
                 #     d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
                 #     mujoco.mj_step(m, d)
                 #     viewer.sync()
-                #     time.sleep(0.01)
+                #     time.sleep(0.01)  
                 
                 real_pos = np.array(robot.read_position())
                 collision_pose = real_pos.copy()
@@ -355,9 +448,34 @@ def descend_and_detect_z(robot, sim_robot, m, d, viewer):
         sd.stop()
 
     if collision_detected:
+        predicted_material = "unknown"
+        if results and len(results) > 0:
+            predicted_material = results[0]['pred_material']
+
+        # --- [NEW] Final Object Classification ---
+        print("\n=== [FINAL] Object Identification ===")
+        if LAST_ESTIMATED_RADIUS_CM <= 0:
+            print("Warning: Radius not set. Did you run 'G' search first?")
+        else:
+            obj_match, match_log = obj_classifier.identify(
+                est_material=predicted_material,
+                est_radius_cm=LAST_ESTIMATED_RADIUS_CM,
+                est_height_cm=height
+            )
+            print(f">>> {match_log}")
+            if obj_match:
+                print(f">>> Final Decision: [{obj_match['name']}]")        
+        print("=== [탐색 종료] 안전 높이 복귀 완료 ===")
         return True, collision_pose, results
     else:
+        print("=== 높이 측정 실패 (바닥 도달) ===")
+        print("   >>> [복귀] 하강 전 안전 높이로 이동")
+
+        # final_pose(바닥) -> safe_high_pose(위)
+        move_to_pos_blocking(safe_high_pose, robot, sim_robot, m, d, viewer, speed=6)
         return False, np.array(robot.read_position()), None
+    
+    
 
 def run_pincer_search(robot, sim_robot, m, d, viewer):
     print("\n=== [G] 핀서 탐색 (X축) 시작 ===")
@@ -556,8 +674,8 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
 
     # [6] 하강 및 충돌 감지 (The Chop)
     print("Step Z-5: 하강 및 충돌 감지")
-    found, collision_pose, results = descend_and_detect_z(robot, sim_robot, m, d, viewer)
-
+    #found, collision_pose, results = descend_and_detect_z(robot, sim_robot, m, d, viewer)
+    found, collision_pose = detect_z(robot, sim_robot, m, d, viewer)
     if found:
         print("=== 충돌 감지 성공 ===")
 
@@ -572,27 +690,14 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
 
         distance = math.sqrt(JOINT6_POSITION[0]**2 + JOINT6_POSITION[1]**2)
         height=(distance*math.tan(diff_from_center*math.pi/180)+0.06)*100 # base와 joint2 높이차(6cm) 추가
+        global LAST_ESTIMATED_HEIGHT_CM
+        LAST_ESTIMATED_HEIGHT_CM = height
+        global LAST_ESTIMATED_DISTANCE_CM
+        LAST_ESTIMATED_DISTANCE_CM = distance
         print(f"--------------------------------------------------")
         print(f"각도: {diff_from_center}°")
         print(f"물체 높이: {height:.1f}cm")
         print(f"--------------------------------------------------")
-        predicted_material = "unknown"
-        if results and len(results) > 0:
-            predicted_material = results[0]['pred_material']
-
-        # --- [NEW] Final Object Classification ---
-        print("\n=== [FINAL] Object Identification ===")
-        if LAST_ESTIMATED_RADIUS_CM <= 0:
-            print("Warning: Radius not set. Did you run 'G' search first?")
-        else:
-            obj_match, match_log = obj_classifier.identify(
-                est_material=predicted_material,
-                est_radius_cm=LAST_ESTIMATED_RADIUS_CM,
-                est_height_cm=height
-            )
-            print(f">>> {match_log}")
-            if obj_match:
-                print(f">>> Final Decision: [{obj_match['name']}]")        
         print("=== [탐색 종료] 안전 높이 복귀 완료 ===")
 
     else:
@@ -667,6 +772,25 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 curr_pwm = final_pwm.copy()
                 target_pwm = final_pwm.copy()
                 key = ''
+            
+            elif key == 'q':
+                # q키 : 높이를 알고있을 때 joint4를 구부려 충돌음 녹음
+                if (LAST_ESTIMATED_DISTANCE_CM <= 0) or (LAST_ESTIMATED_HEIGHT_CM <= 0) or (LAST_ESTIMATED_RADIUS_CM <=0):
+                    print("!!! 충돌음 녹음 전 반지름, 높이 측정이 필요합니다.")
+                
+                height = LAST_ESTIMATED_HEIGHT_CM
+                radius = LAST_ESTIMATED_RADIUS_CM
+                distance = LAST_ESTIMATED_DISTANCE_CM
+
+                j2 = sim_robot.read_ee_pos(joint_name='joint2')
+                j4 = sim_robot.read_ee_pos(joint_name='joint4')
+                j6 = sim_robot.read_ee_pos(joint_name='joint6')
+                a = math.sqrt((j4[0]-j6[0])**2+(j4[1]-j6[1])**2) # 4~6
+                b = math.sqrt((j4[0]-j2[0])**2+(j4[1]-j2[1])**2) # 2~4
+                d = math.sqrt((height-0.06)**2 + (radius+distance+0.05)**2)
+                target_arc_q = math.acos(a**2 + b**2 - d**2) 
+                collision_record_classification(target_arc_q)
+
 
         if teleop_active and key != '':
             next_target_pwm = target_pwm.copy()
