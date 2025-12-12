@@ -27,11 +27,15 @@ pincer_search:
   approach_target_offset: [0, 1080, 3150, 1850, 3300, 2000]  # 거리 측정 시 목표 자세 (J0는 중앙값 유지)
 
 z_search:
-  descend_speed: 10
-  thresh_main: 100     # J2 (허리) 충돌 감지 임계값
-  thresh_sub: 50      # J3, J4 충돌 감지 임계값
+  descend_speed: 2
+  thresh_main: 30     # J2 (허리) 충돌 감지 임계값
+  thresh_sub: 50     # J3, J4 충돌 감지 임계값
   lowest_j2_pwm: 850
   lift_j2_pwm: 1900
 
 colision:
   colision_speed: 20
+
+hit_again:
+  thresh_main: 100
+  thresh_sub: 60
