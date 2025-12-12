@@ -777,19 +777,89 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 # q키 : 높이를 알고있을 때 joint4를 구부려 충돌음 녹음
                 if (LAST_ESTIMATED_DISTANCE_CM <= 0) or (LAST_ESTIMATED_HEIGHT_CM <= 0) or (LAST_ESTIMATED_RADIUS_CM <=0):
                     print("!!! 충돌음 녹음 전 반지름, 높이 측정이 필요합니다.")
-                
-                height = LAST_ESTIMATED_HEIGHT_CM
-                radius = LAST_ESTIMATED_RADIUS_CM
-                distance = LAST_ESTIMATED_DISTANCE_CM
+                    # continue  # 데이터 없으면 스킵하려면 주석 해제
 
-                j2 = sim_robot.read_ee_pos(joint_name='joint2')
-                j4 = sim_robot.read_ee_pos(joint_name='joint4')
-                j6 = sim_robot.read_ee_pos(joint_name='joint6')
-                a = math.sqrt((j4[0]-j6[0])**2+(j4[1]-j6[1])**2) # 4~6
-                b = math.sqrt((j4[0]-j2[0])**2+(j4[1]-j2[1])**2) # 2~4
-                d = math.sqrt((height-0.06)**2 + (radius+distance+0.05)**2)
-                target_arc_q = math.acos(a**2 + b**2 - d**2) 
-                collision_record_classification(target_arc_q)
+                # 단위 주의: CM -> Meter 변환 필요 (저장된 값이 CM라면 100으로 나눠야 함)
+                # 코드 상 LAST_ESTIMATED... 변수들이 cm 단위로 저장되고 있으므로 변환
+                height_m = LAST_ESTIMATED_HEIGHT_CM / 100.0
+                radius_m = LAST_ESTIMATED_RADIUS_CM / 100.0
+                distance_m = LAST_ESTIMATED_DISTANCE_CM  # 이건 read_ee_pos 기반이라 이미 미터(m)일 확률 높음 (확인 필요)
+                # distance 계산 로직(line 339) 보면 sim_robot.read_ee_pos 결과 그대로 썼으니 m 단위 맞음.
+                
+                # 좌표 읽기 (미터 단위)
+                j2 = sim_robot.read_ee_pos(joint_name='joint2') # 어깨
+                j4 = sim_robot.read_ee_pos(joint_name='joint4') # 손목(관절)
+                j6 = sim_robot.read_ee_pos(joint_name='joint6') # 손끝
+
+                # 링크 길이 계산 (피타고라스)
+                # a: Forearm 길이 (J4 ~ J6)
+                len_forearm = math.sqrt((j4[0]-j6[0])**2 + (j4[1]-j6[1])**2 + (j4[2]-j6[2])**2)
+                # b: UpperArm 길이 (J2 ~ J4)
+                len_upperarm = math.sqrt((j4[0]-j2[0])**2 + (j4[1]-j2[1])**2 + (j4[2]-j2[2])**2)
+                
+                # d: 어깨(J2)에서 목표 타격 지점까지의 거리
+                # 타격 지점: 높이는 (height - 0.06), 수평 거리는 (radius + distance + 0.05)
+                # 0.06은 어깨 높이 보정, 0.05는 여유 거리로 보임
+                target_dist = math.sqrt((height_m - 0.06)**2 + (radius_m + distance_m + 0.05)**2)
+
+                print(f"[계산] 팔길이(상):{len_upperarm:.3f}, 팔길이(하):{len_forearm:.3f}, 목표거리:{target_dist:.3f}")
+
+                # [예외 처리 1] 목표가 너무 멀어서 닿지 않음
+                if target_dist > (len_upperarm + len_forearm):
+                    print("!!! 거리 초과: 팔이 닿지 않는 거리입니다. 최대 신전합니다.")
+                    target_pwm_q = 700 # J4 최대 신전값 (사용자 세팅에 맞게 조절)
+                
+                # [예외 처리 2] 목표가 너무 가까움 (삼각형 형성 불가)
+                elif target_dist < abs(len_upperarm - len_forearm):
+                    print("!!! 거리 부족: 너무 가까워서 꺾을 수 없습니다.")
+                    target_pwm_q = 3000 # J4 최대 굴곡값
+                
+                else:
+                    # [정상 계산] 제2 코사인 법칙
+                    # cos(C) = (a^2 + b^2 - c^2) / (2ab)
+                    # 여기서 우리가 구하려는 건 J4의 내부 각도(elbow angle)
+                    cos_angle = (len_upperarm**2 + len_forearm**2 - target_dist**2) / (2 * len_upperarm * len_forearm)
+                    
+                    # 부동소수점 오차로 1.0000001 등이 나올 수 있으므로 클리핑
+                    cos_angle = max(-1.0, min(1.0, cos_angle))
+                    
+                    # 라디안 각도 산출 (삼각형의 내부 각도)
+                    internal_angle_rad = math.acos(cos_angle)
+                    internal_angle_deg = math.degrees(internal_angle_rad)
+                    
+                    print(f"[계산] 필요 내부 각도: {internal_angle_deg:.2f}°")
+
+                    # [단위 변환] 각도(Degree) -> PWM
+                    # 다이나믹셀은 모델마다, 조립마다 0도/180도 기준이 다릅니다.
+                    # 보통 2048이 일자(180도)라고 가정하고 변환 식을 세웁니다.
+                    # 사용자 로봇 세팅: 2048 근처가 펴진 상태(180도)이고, 값이 커지면 접히는 구조라면:
+                    # Target PWM = (Angle / 0.088) ... (단순 변환은 아님, 오프셋 필요)
+                    
+                    # [간이 변환식] 
+                    # 180도(일자)일 때 PWM이 2048(또는 700?)이라고 가정하고 비례식 적용 필요.
+                    # 여기서는 사용자 설정(JOINT_LIMITS[3])을 참고하여 매핑합니다.
+                    # J4: 700(폄) ~ 3500(접음) 이라고 가정하면:
+                    # 180도(폄) = 700 PWM, 0도(완전 접음) = 3500 PWM 이라고 칩시다.
+                    # 식: pwm = 3500 - (angle / 180) * (3500 - 700) 
+                    # (정확한 기구학 매핑은 로봇마다 다릅니다. 아래는 추정식입니다.)
+                    
+                    # 일단 단순하게 각도를 PWM 단위로만 환산해서 더해보겠습니다.
+                    # 1도 = 1/0.088 = 약 11.37 tick
+                    # 180도(직선)에서 internal_angle만큼 꺾어야 함.
+                    # 꺾는 각도 = 180 - internal_angle
+                    bend_angle = 180 - internal_angle_deg
+                    pwm_offset = bend_angle / 0.088
+                    
+                    # J4의 '펴진 상태' PWM이 700이나 2048 중 어디인지에 따라 기준점 설정
+                    # 여기선 700을 '최대 신전(일자)'로 보고 거기서 더하는 방식으로 구현
+                    base_pwm_straight = 700 # J4 Limit Min
+                    target_pwm_q = int(base_pwm_straight + pwm_offset)
+
+                # 최종 안전 범위 클리핑
+                target_pwm_q = np.clip(target_pwm_q, JOINT_LIMITS[3][0], JOINT_LIMITS[3][1])
+                print(f"[명령] J4 Target PWM: {target_pwm_q}")
+
+                collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pwm=target_pwm_q)
 
 
         if teleop_active and key != '':
