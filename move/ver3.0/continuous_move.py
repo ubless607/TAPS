@@ -824,7 +824,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
                 # 1. 입력 거리 확인 (CM 단위)
                 input_dist_cm = LAST_ESTIMATED_DISTANCE_CM
-                #input_dist_cm = 22 # for test
+                input_dist_cm = 15 # for test
                 # 안전장치: 혹시 미터 단위(0.xx)라면 100을 곱해 보정
                 if 0 < input_dist_cm < 1.0: 
                     input_dist_cm *= 100.0
@@ -835,8 +835,8 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 # 12cm -> 80도
                 # 24cm -> 180도
                 
-                xp = [12.0, 24.0]   # 기준 거리 (x축)
-                fp = [80.0, 180.0]  # 기준 각도 (y축)
+                xp = [13.0, 25.0]   # 기준 거리 (x축)
+                fp = [70.0, 180.0]  # 기준 각도 (y축)
 
                 # np.interp는 범위 밖의 값은 자동으로 양쪽 끝값(80, 180)으로 고정(Clamp)해줍니다.
                 target_angle_deg = np.interp(input_dist_cm, xp, fp)
