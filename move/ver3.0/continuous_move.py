@@ -508,6 +508,9 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     # 7. 중앙 정렬
     center_j0 = int((angle_right + angle_left) / 2)
     print(f"Step 7: 중앙({center_j0}) 정렬")
+    #
+    #center_j0 += 20  # (필요시 주석 해제 후 값 조정)
+    #
 
     pwm = PINCER_CONFIG['INITIAL_POSE'].copy()
     pwm[0] = angle_left
@@ -516,24 +519,37 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
     print("Step 8: 물체까지의 거리 측정 (접근 중...)")
-
     start_pwm = np.array(robot.read_position())
 
     # 목표 지점 설정 (J0는 현재 유지, 나머지는 확장)
     target_pwm = PINCER_CONFIG['APPROACH_TARGET_OFFSET'].copy()
+
     target_pwm[0] = start_pwm[0]  # J0는 현재 중앙값 유지
+
     total_pwm_dist = np.linalg.norm(target_pwm - start_pwm)
+
     print(f"-> 전체 경로 길이(PWM Units): {total_pwm_dist:.2f}")
 
+
+
     # --- 접근 루프 설정 ---
+
     steps = 150
+
     collision_detected = False
-    threshold = 200 # PINCER_CONFIG['COLLISION_THRESH']
+
+    threshold = PINCER_CONFIG['COLLISION_THRESH']
+
+
 
     for i in range(steps):
+
         # 1. 선형 보간 (Linear Interpolation)
+
         ratio = (i + 1) / steps
+
         curr_target = start_pwm + (target_pwm - start_pwm) * ratio
+
         curr_target = curr_target.astype(int)
 
         robot.set_goal_pos(curr_target)
@@ -545,56 +561,92 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
         max_error = np.max(errors)
 
         if max_error > threshold:
+
             print(f"!!! 충돌 감지! Step: {i}/{steps} (Max Error: {max_error})")
+
             collision_detected = True
 
             position=sim_robot.read_ee_pos(joint_name='joint6') # joint6의 위치
+
             distance=math.sqrt(position[0]**2+position[1]**2)
+
             print(f"base-joint6 최단거리:{distance+0.05}") # ee 길이 추가
 
             angle_err=math.asin(0.02/distance) # 로봇팔 두께로 인한 각도 오차
+
             angle_diff=abs(pwm_to_degree(angle_left)-pwm_to_degree(angle_right)) # 로봇팔 각도차
+
             angle_diff-=(angle_err*180/math.pi)
 
             # 물체의 반지름 및 중심 계산
-            radius,center=calc_radius_and_center(angle_diff,position)
+
+            radius, center = calc_radius_and_center(angle_diff, position)
+            
             global LAST_ESTIMATED_RADIUS_CM
             LAST_ESTIMATED_RADIUS_CM = radius * 100.0  
-            print(f"   -> [System] Saved Radius for Classification: {LAST_ESTIMATED_RADIUS_CM:.2f} cm")            
+            
+            # =================================================================
+            # [수정] 거리(Distance) 저장을 여기서 해야 합니다!
+            # =================================================================
+            global LAST_ESTIMATED_DISTANCE_CM
+            
+            # distance는 위에서 계산된 (Base ~ J6) 직선 거리 (단위: Meter)
+            # 이걸 CM로 변환해서 저장합니다.
+            LAST_ESTIMATED_DISTANCE_CM = distance * 100.0
+            
+            print(f"   -> [System] Saved Radius: {LAST_ESTIMATED_RADIUS_CM:.2f} cm")
+            print(f"   -> [System] Saved Distance: {LAST_ESTIMATED_DISTANCE_CM:.2f} cm") # 확인용 출력 추가
+            # =================================================================
+
             print(f"물체 반지름: {radius}")
             print(f"물체 중점 좌표: {center}")
-            
+
             # 마지막 충돌에서의 joint6 위치 저장
+
             global JOINT6_POSITION
+
             JOINT6_POSITION=position
 
             # 텐션 완화를 위한 백오프 (Back-off)
+
             back_off_pwm = curr_target - (target_pwm - start_pwm) * 0.1
+
             pwm = back_off_pwm.astype(int)
 
-
-
             # 최종 위치 명령
+
             robot.set_goal_pos(pwm)
+
             time.sleep(0.5)
 
             # --- 결과 계산 ---
+
             actual_dist = total_pwm_dist * ratio
+
             print(f"-> 측정된 거리 비율: {ratio:.2f} (1.0 = Max Reach)")
+
             print(f"-> 측정된 거리 값(PWM): {actual_dist:.2f}")
+
             break
 
         # 충돌이 없으면 현재 타겟 위치 업데이트
+
         pwm = curr_target
 
     if not collision_detected:
+
         print("-> 물체에 닿지 않고 최대 거리에 도달했습니다.")
+
         # 루프가 끝났으므로 마지막 위치 유지
+
         robot.set_goal_pos(target_pwm)
+
         pwm = target_pwm
+
         print(f"-> 측정된 거리 값(PWM): {total_pwm_dist:.2f}")
 
     print("=== X축 탐색 완료 ===")
+
     return pwm
 
 def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
@@ -648,27 +700,41 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
     print("Step Z-5: 하강 및 충돌 감지")
     #found, collision_pose, results = descend_and_detect_z(robot, sim_robot, m, d, viewer)
     found, collision_pose = detect_z(robot, sim_robot, m, d, viewer)
+    
     if found:
         print("=== 충돌 감지 성공 ===")
 
-        # 1. 시뮬레이터 FK로 손끝 높이 계산 (참고용)
+        # 1. 시뮬레이터 FK로 손끝 높이 계산
         d.qpos[:6] = sim_robot._pwm2pos(collision_pose) + JOINT_OFFSETS
         mujoco.mj_kinematics(m, d)
         j2_pwm = collision_pose[1]
-        raw_deg = pwm_to_degree(j2_pwm)       # 모터 기준 (예: 122.76)
+        raw_deg = pwm_to_degree(j2_pwm)
 
         # 2048(180도)이 수직 서있는 상태라면, 거기서 얼마나 숙였는지를 나타냄
         diff_from_center = raw_deg - 90
 
-        distance = math.sqrt(JOINT6_POSITION[0]**2 + JOINT6_POSITION[1]**2)
-        height=(distance*math.tan(diff_from_center*math.pi/180)+0.06)*100 # base와 joint2 높이차(6cm) 추가
+        # =================================================================
+        # [수정] 거리는 새로 재지 말고, G키에서 찾은 값을 씁니다.
+        # =================================================================
+        # JOINT6_POSITION은 G키에서 저장된 값이므로 이걸 써도 되지만,
+        # 이미 LAST_ESTIMATED_DISTANCE_CM에 저장했으므로 그걸 쓰는 게 더 명확합니다.
+        
+        # CM -> Meter 변환
+        distance_m = LAST_ESTIMATED_DISTANCE_CM / 100.0
+        
+        # 높이 계산 (삼각함수)
+        # 밑변(distance) * tan(각도) = 높이
+        height_m = (distance_m * math.tan(diff_from_center * math.pi / 180)) + 0.06
+        
         global LAST_ESTIMATED_HEIGHT_CM
-        LAST_ESTIMATED_HEIGHT_CM = height
-        global LAST_ESTIMATED_DISTANCE_CM
-        LAST_ESTIMATED_DISTANCE_CM = distance
+        LAST_ESTIMATED_HEIGHT_CM = height_m * 100.0
+        
+        # [삭제됨] global LAST_ESTIMATED_DISTANCE_CM = ... (여기서 업데이트 금지!)
+
         print(f"--------------------------------------------------")
-        print(f"각도: {diff_from_center}°")
-        print(f"물체 높이: {height:.1f}cm")
+        print(f"각도: {diff_from_center:.1f}°")
+        print(f"거리: {distance_m * 100:.1f}cm (G-Search 기준)")
+        print(f"물체 높이: {LAST_ESTIMATED_HEIGHT_CM:.1f}cm")
         print(f"--------------------------------------------------")
         print("=== [탐색 종료] 안전 높이 복귀 완료 ===")
 
@@ -746,23 +812,60 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 key = ''
             
             elif key == 'q':
-                # q키 : 높이를 알고있을 때 joint4를 구부려 충돌음 녹음
-                if (LAST_ESTIMATED_DISTANCE_CM <= 0) or (LAST_ESTIMATED_HEIGHT_CM <= 0) or (LAST_ESTIMATED_RADIUS_CM <=0):
-                    print("!!! 충돌음 녹음 전 반지름, 높이 측정이 필요합니다.")
+                # [Q] Simple Linear 타격 (12cm~24cm 선형 보간)
                 
-                height = LAST_ESTIMATED_HEIGHT_CM
-                radius = LAST_ESTIMATED_RADIUS_CM
-                distance = LAST_ESTIMATED_DISTANCE_CM
+                # =================================================================
+                # [설정] 180도(일자) 기준 PWM 및 방향
+                # =================================================================
+                PWM_STRAIGHT = 2048   # 180도일 때 PWM
+                DIRECTION = 1         # 1: 숫자 커지면 굽힘 (곡괭이)
+                TICKS_PER_DEG = 11.375
+                # =================================================================
 
-                j2 = sim_robot.read_ee_pos(joint_name='joint2')*100
-                j4 = sim_robot.read_ee_pos(joint_name='joint4')*100
-                j6 = sim_robot.read_ee_pos(joint_name='joint6')*100
-                a = math.sqrt((j4[0]-j6[0])**2+(j4[1]-j6[1])**2) # 4~6
-                b = math.sqrt((j4[0]-j2[0])**2+(j4[1]-j2[1])**2) # 2~4
-                dist = math.sqrt((height - 0.06)**2 + (radius + distance + 0.05)**2)
+                # 1. 입력 거리 확인 (CM 단위)
+                input_dist_cm = LAST_ESTIMATED_DISTANCE_CM
+                #input_dist_cm = 22 # for test
+                # 안전장치: 혹시 미터 단위(0.xx)라면 100을 곱해 보정
+                if 0 < input_dist_cm < 1.0: 
+                    input_dist_cm *= 100.0
 
-                target_arc_q = math.acos((a**2 + b**2 - dist**2) / (2*a*b))
-                fin_pwm, result = collision_record_classification(target_arc_q)
+                print(f"\n=== [Q] 2-Point 선형 타격 (입력거리: {input_dist_cm:.1f}cm) ===")
+
+                # 2. [수정됨] 2점 기준 선형 보간 (Linear Interpolation)
+                # 12cm -> 80도
+                # 24cm -> 180도
+                
+                xp = [12.0, 24.0]   # 기준 거리 (x축)
+                fp = [80.0, 180.0]  # 기준 각도 (y축)
+
+                # np.interp는 범위 밖의 값은 자동으로 양쪽 끝값(80, 180)으로 고정(Clamp)해줍니다.
+                target_angle_deg = np.interp(input_dist_cm, xp, fp)
+
+                print(f"   -> [매핑] 거리 {input_dist_cm:.1f}cm ==> 목표각도 {target_angle_deg:.1f}°")
+
+                # 3. PWM 변환
+                # 공식: 180도(일자)에서 얼마나 굽혀야 하는가?
+                bend_angle = 180.0 - target_angle_deg
+                
+                # Target PWM 계산
+                target_pwm_q = int(PWM_STRAIGHT + (DIRECTION * bend_angle * TICKS_PER_DEG))
+                
+                # 4. 안전 범위 클리핑
+                target_pwm_q = np.clip(target_pwm_q, JOINT_LIMITS[3][0], JOINT_LIMITS[3][1])
+                
+                print(f"   -> [명령] 굽힘: {bend_angle:.1f}° (PWM: {target_pwm_q})")
+
+                # 5. 실행
+                collision_record_classification(
+                    robot, sim_robot, m, d, viewer, 
+                    j4_target_pwm=target_pwm_q
+                )
+
+                # 6. 동기화 (급발진 방지)
+                real_current_pos = np.array(robot.read_position())
+                curr_pwm = real_current_pos.copy()
+                target_pwm = real_current_pos.copy()
+                key = ''
 
         if teleop_active and key != '':
             next_target_pwm = target_pwm.copy()

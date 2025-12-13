@@ -19,8 +19,8 @@ joint_config:
     - [1500, 3500]  # J6: 그리퍼
 
 pincer_search:
-  sweep_speed: 6
-  collision_thresh: 60
+  sweep_speed: 8
+  collision_thresh: 200
   initial_pose: [2048, 1900, 1050, 1000, 3300, 2000]
   right_extended_pose: [990, 1900, 3150, 1850, 3300, 2000]  # 우측 한계에서의 확장 자세
   left_extended_pose: [3000, 1900, 3150, 1850, 3300, 2000]  # 좌측 한계에서의 확장 자세
@@ -28,13 +28,13 @@ pincer_search:
 
 z_search:
   descend_speed: 2
-  thresh_main: 30     # J2 (허리) 충돌 감지 임계값
+  thresh_main: 18     # J2 (허리) 충돌 감지 임계값
   thresh_sub: 50     # J3, J4 충돌 감지 임계값
   lowest_j2_pwm: 850
   lift_j2_pwm: 1900
 
 colision:
-  colision_speed: 20
+  colision_speed: 15
 
 hit_again:
   thresh_main: 100
