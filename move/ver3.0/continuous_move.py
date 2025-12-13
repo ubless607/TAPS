@@ -348,61 +348,69 @@ def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pw
                 robot.set_goal_pos(real_pos) 
                 
                 # 2. 울림 소리(Resonance)를 담기 위해 0.6초 대기
-                print("   >>> [AUDIO] 여음(Resonance) 녹음 중 (0.6s)...")
-                time.sleep(0.6) 
+                print("   >>> [AUDIO] 여음(Resonance) 녹음 중 (0.3s)...")
+                time.sleep(0.3) 
                 
                 # 3. 이제 녹음 중단
                 sd.stop()
-                
+
                 # --- 오디오 데이터 가공 ---
                 elapsed = time.time() - rec_start_time
-                valid_samples = min(int((elapsed + 0.6) * fs), len(recording)) # 대기시간 포함
-                
-                raw_data = recording[:valid_samples].flatten() # float32 (-1.0 ~ 1.0)
-                
+                valid_samples = min(int((elapsed + 0.3) * fs), len(recording))  # sleep(0.3) 반영
+
+                raw_data = recording[:valid_samples].flatten().astype(np.float32)
+
+                # DC 제거
+                raw0 = raw_data - np.mean(raw_data)
+
+                # High-pass 버전
+                diff_sig = np.diff(raw0, prepend=raw0[0])
+
+                # Envelope (diff 쪽에만 적용)
+                env = np.abs(diff_sig)
+                env = np.convolve(env, np.ones(int(0.005*fs))/(0.005*fs), mode='same')
+                diff_sig = diff_sig * env
+
+                # === 핵심: 혼합 ===
+                alpha = 0.5  # diff 비중 (0.5~0.7 권장)
+                mixed = alpha * diff_sig + (1 - alpha) * raw0
+
+                # 정규화
+                mixed = mixed / np.max(np.abs(mixed))
+                raw_data = mixed
+
+
                 # ============================================================
-                # [핵심 수정 2] 정규화 (Normalization) & 고역 통과 (High-pass)
+                # [STEP 5] Peak 기준 1초 클립
                 # ============================================================
-                # 1. DC Offset 제거 (평균 빼기)
-                raw_data = raw_data - np.mean(raw_data)
-                
-                # 2. 간단한 High-pass Filter 효과 (모터 웅웅거림 제거)
-                # 1차 차분(Difference)을 이용하면 저주파가 많이 죽고 고주파(타격음)가 강조됨
-                # raw_data = np.diff(raw_data, prepend=0) 
-                
-                # 3. 최대 볼륨 정규화 (Normalize to -1.0 ~ 1.0)
-                max_val = np.max(np.abs(raw_data))
-                if max_val > 0:
-                    raw_data = raw_data / max_val
-                    print(f"   >>> [AUDIO] 볼륨 정규화 완료 (Max gain applied)")
-                
-                # 4. Peak 찾기 (가장 큰 소리)
                 peak_index = np.argmax(np.abs(raw_data))
-                
-                # 5. Peak 기준 앞 0.1초 ~ 뒤 0.9초 자르기 (총 1초)
-                # 뒤쪽 여음을 더 길게 가져가야 재질 판단이 잘 됨
-                target_length = 1 * fs 
-                pre_buffer = int(0.1 * fs) 
-                
+
+                target_length = fs  # 1초
+                pre_buffer = int(0.1 * fs)
+
                 start_index = peak_index - pre_buffer
                 end_index = start_index + target_length
-                
+
                 final_clip = np.zeros(target_length, dtype=np.float32)
-                
+
                 src_start = max(0, start_index)
                 src_end = min(len(raw_data), end_index)
-                
+
                 dst_start = max(0, -start_index)
                 dst_end = dst_start + (src_end - src_start)
-                
+
                 final_clip[dst_start:dst_end] = raw_data[src_start:src_end]
-                
-                # 6. int16 변환 후 저장 (WAV 표준)
+
+                # ============================================================
+                # [STEP 6] int16 변환 후 저장
+                # ============================================================
                 final_int16 = (final_clip * 32767).astype(np.int16)
-                
+
                 filename = "tmp_collision_1sec.wav"
                 write(filename, fs, final_int16)
-                print(f"   >>> [AUDIO] 저장 및 분석 준비 완료: {filename}")
+
+                print(f"   >>> [AUDIO] 전처리 완료 및 저장: {filename}")
+
 
                 # 추론 실행
                 results = classify_impacts_in_wav_finetuned(
