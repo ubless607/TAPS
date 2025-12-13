@@ -37,5 +37,5 @@ colision:
   colision_speed: 15
 
 hit_again:
-  thresh_main: 100
-  thresh_sub: 60
+  thresh_main: 70
+  thresh_sub: 50
