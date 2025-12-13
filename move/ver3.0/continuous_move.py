@@ -442,6 +442,24 @@ def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pw
     if collision_detected:
         # ... (이후 결과 처리 및 Classifier 로직은 기존 유지) ...
         # (생략)
+        predicted_material = 'unknown'
+        if results and len(results)>0:
+            predicted_material = results[0]['pred_material']
+        # --- [NEW] Final Object Classification ---
+        print("\n=== [FINAL] Object Identification ===")
+        if LAST_ESTIMATED_RADIUS_CM <= 0 :
+            print("Warning: Radius not set. Did you run 'G' search first?")
+        elif LAST_ESTIMATED_HEIGHT_CM <= 0 :
+            print("Warning: Height not set. Did you run 'Z' search first?")
+        else:
+            obj_match, match_log = obj_classifier.identify(
+                est_material=predicted_material,
+                est_radius_cm=LAST_ESTIMATED_RADIUS_CM,
+                est_height_cm=LAST_ESTIMATED_HEIGHT_CM
+            )
+            print(f">>> {match_log}")
+            if obj_match:
+                print(f">>> Final Decision: [{obj_match['name']}]")  
         return True, collision_pose, results
     else:
         # ... (실패 처리 로직) ...
@@ -754,6 +772,7 @@ print("=== 로봇 통합 제어 시스템 ===")
 print(f"바닥 안전 높이: {FLOOR_LIMIT}m")
 print("G: X축(너비) 탐색 -> 중앙 기억")
 print("Z: Z축(높이) 탐색 (기억된 중앙으로 스윙)")
+print("Q: 수직 충돌 후 충돌음 녹음, 물체 분류")
 print("W/A/S/D...: 수동 제어")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -824,7 +843,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
                 # 1. 입력 거리 확인 (CM 단위)
                 input_dist_cm = LAST_ESTIMATED_DISTANCE_CM
-                input_dist_cm = 15 # for test
+                #input_dist_cm = 15 # for test
                 # 안전장치: 혹시 미터 단위(0.xx)라면 100을 곱해 보정
                 if 0 < input_dist_cm < 1.0: 
                     input_dist_cm *= 100.0
