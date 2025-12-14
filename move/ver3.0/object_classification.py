@@ -20,43 +20,47 @@ class SimpleObjectClassifier:
         self.margins = data.get('tolerance_settings', self.margins)
         print(f"[Classifier] Loaded {len(self.objects)} objects from database.")
 
-    def identify(self, est_material, est_radius_cm, est_height_cm):
+    def _knn_distance(self, est_radius_cm, est_height_cm, obj):
+        # 상대오차 기반 거리
+        r = max(float(obj.get('radius', 0.0)), 1e-9)
+        h = max(float(obj.get('height', 0.0)), 1e-9)
+
+        rel_r = (est_radius_cm - r) / r
+        rel_h = (est_height_cm - h) / h
+        return math.sqrt(rel_r * rel_r + rel_h * rel_h)
+
+    def identify(self, est_material, est_radius_cm, est_height_cm, k=1):
         """
-        Identify object based on material and dimensions with tolerance.
-        Returns: (Best Match Object Dict, match_details_string)
+        1) material 일치 후보만 뽑고
+        2) 그 후보 내에서 (radius,height) kNN으로 가장 가까운 물체를 반환
         """
-        candidates = []
-        
         print(f"\n[Classifier] Searching match for: {est_material}, r={est_radius_cm:.1f}cm, h={est_height_cm:.1f}cm")
 
-        for obj in self.objects:
-            # 1. Material Filter (Case insensitive)
-            if obj['material'].lower() != est_material.lower():
-                continue
+        # 1) material 후보
+        material_candidates = [
+            obj for obj in self.objects
+            if str(obj.get('material', '')).lower() == str(est_material).lower()
+        ]
+        if not material_candidates:
+            return None, "Unknown Object (No material match in DB)"
 
-            # 2. Dimension Check (with Percentage-based Margins)
-            rad_diff = abs(obj['radius'] - est_radius_cm)
-            h_diff = abs(obj['height'] - est_height_cm)
-            
-            # Calculate allowable margin as percentage of actual object dimension
-            rad_margin = obj['radius'] * (self.margins['radius_margin_percent'] / 100.0)
-            h_margin = obj['height'] * (self.margins['height_margin_percent'] / 100.0)
+        # 2) kNN
+        neighbors = []
+        for obj in material_candidates:
+            dist = self._knn_distance(est_radius_cm, est_height_cm, obj)
+            neighbors.append((dist, obj))
 
-            if rad_diff <= rad_margin and h_diff <= h_margin:
-                # Calculate a simple error score (lower is better)
-                # We weight them equally here, but you can adjust weights.
-                score = rad_diff + h_diff
-                candidates.append((score, obj))
+        neighbors.sort(key=lambda x: x[0])
 
-        if not candidates:
-            return None, "Unknown Object (No match in DB)"
+        k = max(1, min(int(k), len(neighbors)))
+        best_match = neighbors[0][1]
+        best_dist = neighbors[0][0]
 
-        # 3. Sort by lowest error score
-        candidates.sort(key=lambda x: x[0])
-        best_match = candidates[0][1]
-        score = candidates[0][0]
+        # 디버그용: Top-k 표시
+        topk_str = ", ".join(
+            f"{n[1]['name']}(d={n[0]:.3f}, r={n[1]['radius']}, h={n[1]['height']})"
+            for n in neighbors[:k]
+        )
 
-        result_str = (f"Identified: {best_match['name']} "
-                      f"(Err: {score:.2f} | DB: r{best_match['radius']}/h{best_match['height']})")
-        
+        result_str = f"Identified: {best_match['name']} (kNN d={best_dist:.3f} | Top-{k}: {topk_str})"
         return best_match, result_str
