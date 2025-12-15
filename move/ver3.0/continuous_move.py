@@ -14,8 +14,10 @@ import sounddevice as sd
 from scipy.io.wavfile import write
 import torch
 
-from utils import classify_impacts_in_wav_finetuned, pwm_to_degree, load_finetuned_panns
-#from utils import pwm_to_degree
+from utils import pwm_to_degree
+from sounds import classify_impacts_in_wav_finetuned, load_finetuned_panns
+#from moves import 
+
 from object_classification import SimpleObjectClassifier
 # =========================================================
 # Load Config
