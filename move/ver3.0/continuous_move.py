@@ -319,7 +319,7 @@ def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pw
     recording = sd.rec(int(max_duration * fs), samplerate=fs, channels=1, dtype='float32') # int16 대신 float32 권장 (정규화 용이)
     rec_start_time = time.time()
     
-    target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
+    target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM'] + 200
     direction = -1 if curr_pwm[joint_idx] > target_val else 1
     safe_high_pose = curr_pwm.copy()
 
@@ -868,7 +868,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
                 # 1. 입력 거리 확인 (CM 단위)
                 input_dist_cm = LAST_ESTIMATED_DISTANCE_CM
-                #input_dist_cm = 13 # for test
+                #input_dist_cm = 15 # for test
                 # 안전장치: 혹시 미터 단위(0.xx)라면 100을 곱해 보정
                 if 0 < input_dist_cm < 1.0: 
                     input_dist_cm *= 100.0
