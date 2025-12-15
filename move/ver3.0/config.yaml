@@ -28,7 +28,7 @@ pincer_search:
 
 z_search:
   descend_speed: 2
-  thresh_main: 18     # J2 (허리) 충돌 감지 임계값
+  thresh_main: 25     # J2 (허리) 충돌 감지 임계값
   thresh_sub: 50     # J3, J4 충돌 감지 임계값
   lowest_j2_pwm: 850
   lift_j2_pwm: 1900
@@ -37,5 +37,5 @@ colision:
   colision_speed: 15
 
 hit_again:
-  thresh_main: 70
-  thresh_sub: 50
+  thresh_main: 80
+  thresh_sub: 60

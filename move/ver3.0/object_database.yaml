@@ -38,7 +38,7 @@ objects:
   - id: "obj_06"
     name: "Box"
     material: "paper"
-    radius: 4.0
+    radius: 4.5
     height: 5.0
 
   - id: "obj_07"
@@ -56,5 +56,5 @@ objects:
   - id: "obj_09"
     name: "Pencil case"
     material: "wood"
-    radius: 3.7
+    radius: 3.8
     height: 10.0
