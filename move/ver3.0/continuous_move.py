@@ -283,7 +283,7 @@ def detect_z(robot, sim_robot, m, d, viewer):
 
 
 
-def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pwm=None):
+def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pwm=None, saved_filename='collision.wav'):
     curr_pwm = np.array(robot.read_position())
     joint_idx = 1 # J2 (Waist)
 
@@ -406,7 +406,7 @@ def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pw
                 # ============================================================
                 final_int16 = (final_clip * 32767).astype(np.int16)
 
-                filename = "tmp_collision_1sec.wav"
+                filename = saved_filename
                 write(filename, fs, final_int16)
 
                 print(f"   >>> [AUDIO] 전처리 완료 및 저장: {filename}")
@@ -598,7 +598,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
             print(f"base-joint6 최단거리:{distance+0.05}") # ee 길이 추가
 
-            angle_err=math.asin(0.02/distance) # 로봇팔 두께로 인한 각도 오차
+            angle_err=math.asin(0.02/(distance+0.05)) # 로봇팔 두께로 인한 각도 오차
 
             angle_diff=abs(pwm_to_degree(angle_left)-pwm_to_degree(angle_right)) # 로봇팔 각도차
 
@@ -609,7 +609,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
             radius, center = calc_radius_and_center(angle_diff, position)
             
             global LAST_ESTIMATED_RADIUS_CM
-            LAST_ESTIMATED_RADIUS_CM = radius * 100.0  
+            LAST_ESTIMATED_RADIUS_CM = radius * 100.0
             
             # =================================================================
             # [수정] 거리(Distance) 저장을 여기서 해야 합니다!
@@ -618,7 +618,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
             
             # distance는 위에서 계산된 (Base ~ J6) 직선 거리 (단위: Meter)
             # 이걸 CM로 변환해서 저장합니다.
-            LAST_ESTIMATED_DISTANCE_CM = distance * 100.0
+            LAST_ESTIMATED_DISTANCE_CM = distance * 100.0+5
             
             print(f"   -> [System] Saved Radius: {LAST_ESTIMATED_RADIUS_CM:.2f} cm")
             print(f"   -> [System] Saved Distance: {LAST_ESTIMATED_DISTANCE_CM:.2f} cm") # 확인용 출력 추가
@@ -855,44 +855,45 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 # 안전장치: 혹시 미터 단위(0.xx)라면 100을 곱해 보정
                 if 0 < input_dist_cm < 1.0: 
                     input_dist_cm *= 100.0
-
-                print(f"\n=== [Q] 2-Point 선형 타격 (입력거리: {input_dist_cm:.1f}cm) ===")
-
-                # 2. [수정됨] 2점 기준 선형 보간 (Linear Interpolation)
-                # 12cm -> 80도
-                # 24cm -> 180도
                 
-                xp = [13.0, 25.0]   # 기준 거리 (x축)
-                fp = [70.0, 180.0]  # 기준 각도 (y축)
+                for i in range(25):
+                    print(f"\n=== [Q] 2-Point 선형 타격 (입력거리: {input_dist_cm:.1f}cm) ===")
 
-                # np.interp는 범위 밖의 값은 자동으로 양쪽 끝값(80, 180)으로 고정(Clamp)해줍니다.
-                target_angle_deg = np.interp(input_dist_cm, xp, fp)
+                    # 2. [수정됨] 2점 기준 선형 보간 (Linear Interpolation)
+                    # 12cm -> 80도
+                    # 24cm -> 180도
+                    
+                    xp = [13.0, 25.0]   # 기준 거리 (x축)
+                    fp = [70.0, 180.0]  # 기준 각도 (y축)
 
-                print(f"   -> [매핑] 거리 {input_dist_cm:.1f}cm ==> 목표각도 {target_angle_deg:.1f}°")
+                    # np.interp는 범위 밖의 값은 자동으로 양쪽 끝값(80, 180)으로 고정(Clamp)해줍니다.
+                    target_angle_deg = np.interp(input_dist_cm, xp, fp)
 
-                # 3. PWM 변환
-                # 공식: 180도(일자)에서 얼마나 굽혀야 하는가?
-                bend_angle = 180.0 - target_angle_deg
-                
-                # Target PWM 계산
-                target_pwm_q = int(PWM_STRAIGHT + (DIRECTION * bend_angle * TICKS_PER_DEG))
-                
-                # 4. 안전 범위 클리핑
-                target_pwm_q = np.clip(target_pwm_q, JOINT_LIMITS[3][0], JOINT_LIMITS[3][1])
-                
-                print(f"   -> [명령] 굽힘: {bend_angle:.1f}° (PWM: {target_pwm_q})")
+                    print(f"   -> [매핑] 거리 {input_dist_cm:.1f}cm ==> 목표각도 {target_angle_deg:.1f}°")
 
-                # 5. 실행
-                collision_record_classification(
-                    robot, sim_robot, m, d, viewer, 
-                    j4_target_pwm=target_pwm_q
-                )
+                    # 3. PWM 변환
+                    # 공식: 180도(일자)에서 얼마나 굽혀야 하는가?
+                    bend_angle = 180.0 - target_angle_deg
+                    
+                    # Target PWM 계산
+                    target_pwm_q = int(PWM_STRAIGHT + (DIRECTION * bend_angle * TICKS_PER_DEG))
+                    
+                    # 4. 안전 범위 클리핑
+                    target_pwm_q = np.clip(target_pwm_q, JOINT_LIMITS[3][0], JOINT_LIMITS[3][1])
+                    
+                    print(f"   -> [명령] 굽힘: {bend_angle:.1f}° (PWM: {target_pwm_q})")
+                    filename=f"cup_plastic/cup_collision_{i}.wav"
+                    # 5. 실행
+                    collision_record_classification(
+                        robot, sim_robot, m, d, viewer, 
+                        j4_target_pwm=target_pwm_q, saved_filename=filename
+                    )
 
-                # 6. 동기화 (급발진 방지)
-                real_current_pos = np.array(robot.read_position())
-                curr_pwm = real_current_pos.copy()
-                target_pwm = real_current_pos.copy()
-                key = ''
+                    # 6. 동기화 (급발진 방지)
+                    real_current_pos = np.array(robot.read_position())
+                    curr_pwm = real_current_pos.copy()
+                    target_pwm = real_current_pos.copy()
+                    key = ''
 
         if teleop_active and key != '':
             next_target_pwm = target_pwm.copy()
