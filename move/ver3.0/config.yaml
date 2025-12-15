@@ -1,41 +1,42 @@
 settings:
-  port: 'COM3'
+  port: 'COM4'
   ee_site_name: 'joint6'
   floor_limit: 0.07
   gripper_open_pwm: 2979
   gripper_close_pwm: 1901
   joint_speed: 6
-  panns_model_path: '../../sound_classification/panns_finetuned_best.pth'
+  panns_model_path: '../../sound_classification/panns_finetuned_with_real_data.pth'
 
 joint_config:
-  offsets: [0.00, 0.25, -1.57, 0.00, 2.29, 0.00]
-  motor_dir: [1, 1, 1, 1, 1, 1]
+  #offsets: [0.00, 0.25, -1.57, 0.00, 2.29, 0.00]
+  offsets: [0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
+  motor_dir: [1, -1, 1, 1, 1, 1]
   limits:
-    - [900, 3000]   # J1: 몸통
-    - [800, 2000]   # J2: 허리
-    - [1000, 3500]  # J3: 팔꿈치
-    - [700, 3500]   # J4: 손목 끄덕
-    - [0, 4095]     # J5: 손목 회전
-    - [1500, 3500]  # J6: 그리퍼
+    - [900, 3000]   # J1: 몸통, 우->좌
+    - [1700, 3000]   # J2: 허리, 세움 -> 숙임
+    - [1200, 3100]  # J3: 팔꿈치, 아래 -> 위
+    - [2000, 4000]   # J4: 손목 끄덕, 위->아래
+    - [100, 2300]     # J5: 손목 회전, 시계 -> 반시계
+    - [1500, 3500]  # J6: 그리퍼, 닫힘 -> 열림
 
 pincer_search:
   sweep_speed: 8
   collision_thresh: 200
-  initial_pose: [2048, 1900, 1050, 1000, 3300, 2000]
-  right_extended_pose: [990, 1900, 3150, 1850, 3300, 2000]  # 우측 한계에서의 확장 자세
-  left_extended_pose: [3000, 1900, 3150, 1850, 3300, 2000]  # 좌측 한계에서의 확장 자세
-  approach_target_offset: [0, 1080, 3150, 1850, 3300, 2000]  # 거리 측정 시 목표 자세 (J0는 중앙값 유지)
+  initial_pose: [2100, 2203, 1210, 2000, 1200, 2043]
+  right_extended_pose: [1000, 3000, 3100, 3000, 1200, 2000]  # 우측 한계에서의 확장 자세
+  left_extended_pose: [3000, 3000, 3100, 3000, 1200, 2000]  # 좌측 한계에서의 확장 자세
+  approach_target_offset: [0, 2900, 3150, 2900, 1200, 2000]  # 거리 측정 시 목표 자세 (J0는 중앙값 유지)
 
 z_search:
   descend_speed: 2
-  thresh_main: 25     # J2 (허리) 충돌 감지 임계값
+  thresh_main: 45     # J2 (허리) 충돌 감지 임계값
   thresh_sub: 50     # J3, J4 충돌 감지 임계값
-  lowest_j2_pwm: 850
+  lowest_j2_pwm: 3000
   lift_j2_pwm: 1900
 
 colision:
   colision_speed: 15
 
 hit_again:
-  thresh_main: 80
+  thresh_main: 95
   thresh_sub: 60

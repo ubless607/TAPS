@@ -206,32 +206,42 @@ def detect_z(robot, sim_robot, m, d, viewer):
     curr_pwm = np.array(robot.read_position())
     joint_idx = 1  # J2 (Waist)
 
-    print("   >>> 하강 시작 (DESCEND) ...")
+    # [수정] 목표는 무조건 J2의 최대값(3000, 바닥)입니다.
+    # config에서 가져오거나, limits에서 직접 가져옵니다.
+    FLOOR_PWM_LIMIT = JOINT_LIMITS[1][1]  # 3000
+    SAFE_HIGH_PWM = JOINT_LIMITS[1][0] + 200    # 1700 (세운 자세)
 
-    target_val = Z_SEARCH_CONFIG['LOWEST_J2_PWM']
-    direction = -1 if curr_pwm[joint_idx] > target_val else 1
+    print(f"   >>> 하강 시작 (Target: {FLOOR_PWM_LIMIT}까지 증가)")
 
     collision_detected = False
     collision_pose = None
 
     try:
         while True:
-            curr_pwm[joint_idx] += config['z_search']['descend_speed'] * direction
+            # [핵심] 방향 계산 필요 없음. 무조건 + (3000 쪽으로)
+            # descend_speed만큼 더해서 내려갑니다.
+            curr_pwm[joint_idx] += config['z_search']['descend_speed']
 
-            # 바닥 한계 도달 체크
-            if (direction < 0 and curr_pwm[joint_idx] < target_val) or \
-               (direction > 0 and curr_pwm[joint_idx] > target_val):
-                print("   -> 바닥 한계 도달 (충돌 없음)")
+            # 1. 바닥 한계(3000) 도달 체크
+            if curr_pwm[joint_idx] >= FLOOR_PWM_LIMIT:
+                print(f"   -> 바닥 한계 도달 ({curr_pwm[joint_idx]} >= {FLOOR_PWM_LIMIT}) - 충돌 없음")
+                # 안전을 위해 한계값으로 클램핑 후 이동하고 종료
+                curr_pwm[joint_idx] = FLOOR_PWM_LIMIT
+                robot.set_goal_pos(curr_pwm)
                 break
 
+            # 2. 로봇 이동 명령
             robot.set_goal_pos(curr_pwm)
+            
+            # 시뮬레이션 동기화 (충돌 감지용)
             d.qpos[:6] = sim_robot._pwm2pos(curr_pwm) + JOINT_OFFSETS
             mujoco.mj_step(m, d)
             viewer.sync()
 
-            # --- 다관절 오차 감시 ---
+            # --- 3. 다관절 오차 감시 (충돌 감지) ---
             real_pos = np.array(robot.read_position())
-
+            
+            # 각 관절별 오차 계산
             err_j2 = abs(curr_pwm[1] - real_pos[1])
             err_j3 = abs(curr_pwm[2] - real_pos[2])
             err_j4 = abs(curr_pwm[3] - real_pos[3])
@@ -243,30 +253,29 @@ def detect_z(robot, sim_robot, m, d, viewer):
                 print(f"   !!! 충돌 감지! (J2:{err_j2}, J3:{err_j3}, J4:{err_j4})")
 
                 collision_detected = True
-                collision_pose = real_pos.copy()  # 충돌 시점 실제 포즈 저장
-                time.sleep(1)
-                print("위치 저장")
+                collision_pose = real_pos.copy()  # 충돌 시점 저장
+                time.sleep(1) # 충돌 확인 대기
+                print("위치 저장 완료")
 
-                # [긴급 회피] J2 최대 상승 및 J4 원위치
-                print("   >>> [긴급 회피] J2 최대 상승 및 J4 펴기")
+                # ==========================================
+                # [긴급 회피] 무조건 1700(세운 자세)으로 복귀
+                # ==========================================
+                print("   >>> [긴급 회피] J2 상승(1700) 및 J4 펴기")
                 
-                # 1. 현재 위치 읽기
                 safe_pwm = real_pos.copy()
                 
-                # 2. J2(허리) 먼저 들어올리기 (충돌 회피)
-                safe_pwm[1] = JOINT_LIMITS[1][1] 
+                # J2: 1700 (세움)으로 이동
+                safe_pwm[1] = SAFE_HIGH_PWM 
                 move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=2)
 
-                # 3. [추가됨] J4(손목) 천천히 펴기
-                # J4가 굽혀진 채로 끝나지 않고, 안전하게 펴지도록 합니다.
-                # JOINT_LIMITS[3][0]가 펴진 상태(낮은 PWM)라고 가정하거나, 
-                # q키 누르기 전 값을 원한다면 적절한 값을 넣어야 합니다. 
-                # 여기서는 '최대 펴짐'에 가까운 안전 범위 최소값으로 설정 예시:
-                safe_pwm[3] = JOINT_LIMITS[3][0] + 100 # 약간 여유
+                # J4: 손목 펴기 (Limits[3][0] = 2000 쪽으로)
+                # 약간의 여유를 둬서 2100 정도로 설정
+                safe_pwm[3] = JOINT_LIMITS[3][0] + 100 
                 move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=4)
 
                 break
 
+            # 사용자 중단 (x키)
             cmd = get_command_nonblocking()
             if cmd == 'x':
                 return False, None
@@ -279,6 +288,11 @@ def detect_z(robot, sim_robot, m, d, viewer):
     if collision_detected:
         return True, collision_pose
     else:
+        # 바닥까지 갔는데 충돌 없었음 -> 다시 안전 높이(1700)로 복귀 시키는 게 좋음
+        print("   >>> [복귀] 바닥에서 안전 높이로 상승")
+        curr_pwm[1] = SAFE_HIGH_PWM
+        move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=6)
+        
         return False, np.array(robot.read_position())
 
 
@@ -431,7 +445,7 @@ def collision_record_classification(robot, sim_robot, m, d, viewer, j4_target_pw
                 # [긴급 회피] J2 상승 & J4 펴기 (이전 답변 코드 적용)
                 print("   >>> [긴급 회피] J2 상승 & J4 펴기")
                 safe_pwm = real_pos.copy()
-                safe_pwm[1] = JOINT_LIMITS[1][1] 
+                safe_pwm[1] = JOINT_LIMITS[1][0] 
                 move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=2)
                 safe_pwm[3] = JOINT_LIMITS[3][0] + 100 
                 move_to_pos_blocking(safe_pwm, robot, sim_robot, m, d, viewer, speed=4)
@@ -488,8 +502,9 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
     # 3. 팔 뻗기 (우측)
     pwm = PINCER_CONFIG['RIGHT_EXTENDED_POSE'].copy()
+    pwm[1] = 2000
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
-    pwm[1] = 1000
+    pwm[1] = config['pincer_search']['right_extended_pose'][1]
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
 
     # 4. 우 -> 좌 스윕
@@ -514,9 +529,11 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
     # 팔 뻗기 (좌측)
     pwm = PINCER_CONFIG['LEFT_EXTENDED_POSE'].copy()
+    pwm[1] = 2000
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
-    pwm[1] = 1000
+    pwm[1] = config['pincer_search']['left_extended_pose'][1]
     if not move_to_pos_blocking(pwm, robot, sim_robot, m, d, viewer): return pwm
+    
 
     # 6. 좌 -> 우 스윕
     found_l, angle_left = sweep_until_collision(-1, robot, sim_robot, m, d, viewer)
@@ -635,7 +652,7 @@ def run_pincer_search(robot, sim_robot, m, d, viewer):
 
             # 텐션 완화를 위한 백오프 (Back-off)
 
-            back_off_pwm = curr_target - (target_pwm - start_pwm) * 0.1
+            back_off_pwm = curr_target - (target_pwm - start_pwm) * 0.2
 
             pwm = back_off_pwm.astype(int)
 
@@ -699,13 +716,13 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
     # [3] 허공에서 최대 신전 (Expand)
     print("Step Z-2: 허공에서 최대 신전")
 
-    curr_pwm[1] = JOINT_LIMITS[1][1] # J2 Max
+    curr_pwm[1] = JOINT_LIMITS[1][0] + 200 # J2 Max
     if not move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=5): return curr_pwm
 
     curr_pwm[3] = JOINT_LIMITS[3][0] # J4 Max
     if not move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=5): return curr_pwm
 
-    curr_pwm[2] = 3150
+    curr_pwm[2] = 3100
     if not move_to_pos_blocking(curr_pwm, robot, sim_robot, m, d, viewer, speed=5): return curr_pwm
 
     # [4] 목표 지점으로 스윙 (Swing to Target)
@@ -734,10 +751,10 @@ def run_z_search(robot, sim_robot, m, d, viewer, target_j0):
         d.qpos[:6] = sim_robot._pwm2pos(collision_pose) + JOINT_OFFSETS
         mujoco.mj_kinematics(m, d)
         j2_pwm = collision_pose[1]
-        raw_deg = pwm_to_degree(j2_pwm)
+        raw_deg = pwm_to_degree(j2_pwm - 2048)
 
         # 2048(180도)이 수직 서있는 상태라면, 거기서 얼마나 숙였는지를 나타냄
-        diff_from_center = raw_deg - 90
+        diff_from_center = 90 - raw_deg
 
         # =================================================================
         # [수정] 거리는 새로 재지 말고, G키에서 찾은 값을 씁니다.
@@ -844,7 +861,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
                 # =================================================================
                 # [설정] 180도(일자) 기준 PWM 및 방향
                 # =================================================================
-                PWM_STRAIGHT = 2048   # 180도일 때 PWM
+                PWM_STRAIGHT = 3000   # 180도일 때 PWM
                 DIRECTION = 1         # 1: 숫자 커지면 굽힘 (곡괭이)
                 TICKS_PER_DEG = 11.375
                 # =================================================================
