@@ -8,5 +8,5 @@ This projects performs object classification within a candidate set by sequentia
 ---
 ## Demo
 
-https://github.com/user-attachments/assets/189582a6-37c8-4305-90d0-59c0ef5a5a6c
+https://github.com/user-attachments/assets/ab322c13-d82c-4b98-85c9-57fcaeeaff32
 
