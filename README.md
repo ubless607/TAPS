@@ -1,12 +1,15 @@
-# TAPS: Low-Cost Robot Arm Project
-![project](project.png)
+# TAPS: Tactile-Acoustic Perception for Vision-denied Robot Operation
+- Final team project for *EECE490G: Robot Learning @POSTECH*
+- Check out for the [paper](/figure/paper.pdf) and [demo video](/figure/demo.mp4).
 
-Conventional robot control relies on cameras or LiDAR, but these sensors are highly vulnerable to environmental factors such as lighting changes, smoke, fog, occlusion, and clutter. It is therefore essential to have alternative sensing modalities when vision sensors are rendered ineffective.
-
-This projects performs object classification within a candidate set by sequentially performing **tactile exploration** to estimate position and size, and **acoustic perception** to collect impact sounds, using a robotic arm in **vision-denied environments**.
+![project](/figure/project.png)
 
 ---
-## Demo
+## Overview
 
-https://github.com/user-attachments/assets/ab322c13-d82c-4b98-85c9-57fcaeeaff32
+**When robots can't see, they can still feel and listen.**
+
+TAPS is a vision-denied robotic perception system that recognizes objects through **active touch and sound**. By combining contact-based geometric exploration with impact-sound-based material classification, TAPS enables reliable object recognition without cameras or LiDAR, making it suitable for low-visibility environments such as somke, darkness, or occlusion.
+
+
 
