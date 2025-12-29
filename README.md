@@ -28,13 +28,13 @@ https://github.com/user-attachments/assets/ab322c13-d82c-4b98-85c9-57fcaeeaff32
 2. **Download pre-trained models:**
    - [Google Drive](#) *(link to be added)*
    - Place the downloaded model files in the `models/` directory.
-<br>
+
 3. **Run the main control script:**
    ```sh
    python move/ver3.0/continuous_move.py
    ```
 
-4. **Keyboard Controls:**<br>
+4. **Keyboard Controls:**
    - `W`, `A`, `S`, `D`: Move the robot base (manual control)
    - `G`: X-axis (width) exploration — finds and memorizes the object's center
    - `Z`: Z-axis (height) exploration — measures object height at the memorized center
@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/ab322c13-d82c-4b98-85c9-57fcaeeaff32
    - `R`: Open gripper
    - `T`: Close gripper
    - `E`, `C`, `U`, `J`, `I`, `K`: Fine joint controls (see code for details)
-<br>
+
 5. **Workflow Example:**
    1. Press `G` to perform X-axis search and memorize the object's center.
    2. Press `Z` to perform Z-axis search at the memorized center and measure height.
