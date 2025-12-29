@@ -1,6 +1,6 @@
 # TAPS: Tactile-Acoustic Perception for Vision-denied Robot Operation
 - Final team project for *EECE490G: Robot Learning @POSTECH*
-- Check out for the [paper](/figure/paper.pdf) and [demo video](/figure/demo.mp4).
+- Check out for the [paper](/figure/paper.pdf) for more details!
 
 ![project](/figure/project.png)
 
@@ -13,3 +13,7 @@ TAPS is a vision-denied robotic perception system that recognizes objects throug
 
 
 
+---
+## Demo
+
+https://github.com/user-attachments/assets/ab322c13-d82c-4b98-85c9-57fcaeeaff32
